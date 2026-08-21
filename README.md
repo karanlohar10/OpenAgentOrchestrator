@@ -1,9 +1,7 @@
 # OpenAgentOrchestrator
 
 A standalone, self-contained .NET 10 service for hosting and executing multi-agent AI
-orchestrator workflows. Built for an AI Hackathon as a fork of an internal Lifecare Open
-Platform service, with all platform-specific SDK dependencies, external database, and deployment
-tooling stripped out in favor of a single `config.yaml` file and file/in-memory persistence.
+orchestrator workflows. 
 
 ## Highlights
 
