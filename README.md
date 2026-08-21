@@ -32,7 +32,9 @@ tooling stripped out in favor of a single `config.yaml` file and file/in-memory 
 ## Solution Structure
 
 - **Service** — plain ASP.NET Core 10 entry point (`WebApplication.CreateBuilder`), Swagger,
-  health check, and the Command/Query controllers. Owns `config.yaml` / `config.sample.yaml`.
+  health check, and the Command/Query controllers. Owns `config.yaml` / `config.sample.yaml` and
+  the `instructions/` folder (agent prompt/response-schema files — see [Instructions & Response
+  Schema Files](#instructions--response-schema-files)).
 - **Command.Application** — the sequential workflow engine, checkpointing, in-memory session
   store, agent factory (chat agents + harness agents), shell tool factory, chat-client factory,
   MCP tool binding, and the YAML `ConfigStore`/`ConfigValidator`. Registered via a plain
@@ -98,6 +100,32 @@ Any agent (harness or chat) can be given a local shell tool by adding a `shellTo
 This wires up `LocalShellExecutor`/`ShellEnvironmentProvider` (`Microsoft.Agents.AI.Tools.Shell`)
 and attaches `.AsAIFunction(requireApproval: ...)` to the agent's tool list, with the executor's
 lifetime scoped to the agent. See `Command.Application/Tools/ShellToolFactory.cs`.
+
+## Instructions & Response Schema Files
+
+Agent `instructions` and structured-output `responseFormat.schema` can be authored either inline
+in `config.yaml`, or as standalone files under a configurable folder (default: `Service/instructions/`,
+see `ConfigYaml.InstructionsRoot` in `appsettings.json`) — useful for long/complex prompts and
+JSON schemas that are unwieldy as inline YAML strings:
+
+```yaml
+agents:
+  - name: research-agent
+    instructionsFile: "research-agent.instructions.md"   # relative to InstructionsRoot
+    responseFormat:
+      type: json_schema
+      schemaFile: "research-summary.schema.json"          # relative to InstructionsRoot
+```
+
+- Files are resolved once, at config-load/reload time, into the in-memory
+  `Instructions`/`Schema` values — nothing else in the pipeline needs to know the difference.
+- If both the inline field (`instructions` / `responseFormat.schema`) and its file counterpart
+  are set, the **inline value always wins** and a warning is logged; the file is not read.
+- A missing referenced file fails config load/reload with a clear error (same failure path as a
+  missing/invalid `config.yaml`).
+- These files contain only prompts/schemas — never secrets — so, unlike `config.yaml`, they are
+  safe to commit. See `Service/instructions/` for the sample files referenced by
+  `config.sample.yaml`.
 
 ## REST API
 

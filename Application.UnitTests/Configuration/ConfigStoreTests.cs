@@ -117,9 +117,100 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
             sut.GetOrchestrator("orch").Should().NotBeNull();
         }
 
-        private ConfigStore CreateSut(string? configPath = null)
+        [TestMethod]
+        public void GetConfig_WhenAgentHasInstructionsFile_ResolvesInstructionsFromFile()
         {
-            var options = Options.Create(new ConfigYamlOptions { Path = configPath ?? _configPath });
+            // Arrange
+            var instructionsDir = Path.Combine(_tempDir, "instructions");
+            Directory.CreateDirectory(instructionsDir);
+            File.WriteAllText(Path.Combine(instructionsDir, "planner.md"), "Plan carefully from file.");
+
+            var yaml = ValidYaml.Replace(
+                "instructions: \"Plan.\"",
+                "instructionsFile: \"planner.md\"");
+            File.WriteAllText(_configPath, yaml);
+
+            var sut = CreateSut(instructionsRoot: instructionsDir);
+
+            // Act
+            var agent = sut.GetOrchestrator("orch")!.Agents.Single(a => a.Name == "planner");
+
+            // Assert
+            agent.Instructions.Should().Be("Plan carefully from file.");
+        }
+
+        [TestMethod]
+        public void GetConfig_WhenResponseFormatHasSchemaFile_ResolvesSchemaFromFile()
+        {
+            // Arrange
+            var instructionsDir = Path.Combine(_tempDir, "instructions");
+            Directory.CreateDirectory(instructionsDir);
+            File.WriteAllText(Path.Combine(instructionsDir, "schema.json"), """{"type":"object"}""");
+
+            var yaml = ValidYaml.TrimEnd() + "\n" +
+                "        responseFormat:\n" +
+                "          type: json_schema\n" +
+                "          schemaFile: \"schema.json\"\n";
+            File.WriteAllText(_configPath, yaml);
+
+            var sut = CreateSut(instructionsRoot: instructionsDir);
+
+            // Act
+            var agent = sut.GetOrchestrator("orch")!.Agents.Single(a => a.Name == "planner");
+
+            // Assert
+            agent.ResponseFormat.Should().NotBeNull();
+            agent.ResponseFormat!.Schema.Should().Be("""{"type":"object"}""");
+        }
+
+        [TestMethod]
+        public void GetConfig_WhenBothInlineInstructionsAndInstructionsFileAreSet_InlineWins()
+        {
+            // Arrange
+            var instructionsDir = Path.Combine(_tempDir, "instructions");
+            Directory.CreateDirectory(instructionsDir);
+            File.WriteAllText(Path.Combine(instructionsDir, "planner.md"), "From file - should be ignored.");
+
+            var yaml = ValidYaml.Replace(
+                "instructions: \"Plan.\"",
+                "instructions: \"Plan.\"\n        instructionsFile: \"planner.md\"");
+            File.WriteAllText(_configPath, yaml);
+
+            var sut = CreateSut(instructionsRoot: instructionsDir);
+
+            // Act
+            var agent = sut.GetOrchestrator("orch")!.Agents.Single(a => a.Name == "planner");
+
+            // Assert
+            agent.Instructions.Should().Be("Plan.");
+        }
+
+        [TestMethod]
+        public void Constructor_WhenInstructionsFileIsMissing_Throws()
+        {
+            // Arrange
+            var instructionsDir = Path.Combine(_tempDir, "instructions");
+            Directory.CreateDirectory(instructionsDir);
+
+            var yaml = ValidYaml.Replace(
+                "instructions: \"Plan.\"",
+                "instructionsFile: \"does-not-exist.md\"");
+            File.WriteAllText(_configPath, yaml);
+
+            // Act
+            var act = () => CreateSut(instructionsRoot: instructionsDir);
+
+            // Assert
+            act.Should().Throw<FileNotFoundException>();
+        }
+
+        private ConfigStore CreateSut(string? configPath = null, string? instructionsRoot = null)
+        {
+            var options = Options.Create(new ConfigYamlOptions
+            {
+                Path = configPath ?? _configPath,
+                InstructionsRoot = instructionsRoot ?? Path.Combine(_tempDir, "instructions")
+            });
             var validator = new ConfigValidator();
             return new ConfigStore(options, validator, NullLogger<ConfigStore>.Instance);
         }

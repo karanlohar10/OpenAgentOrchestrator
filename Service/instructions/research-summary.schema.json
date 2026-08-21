@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ResearchSummary",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "A concise summary of the verified research findings."
+    },
+    "sources": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "URLs or citations for the sources used."
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "The agent's confidence in the findings."
+    }
+  },
+  "required": ["summary", "sources", "confidence"],
+  "additionalProperties": false
+}

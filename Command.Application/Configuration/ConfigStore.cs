@@ -44,6 +44,7 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             .Build();
 
         private readonly string _configYamlPath;
+        private readonly string _instructionsRoot;
         private readonly IConfigValidator _configValidator;
         private readonly ILogger<ConfigStore> _logger;
         private readonly object _lock = new();
@@ -55,6 +56,7 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             ILogger<ConfigStore> logger)
         {
             _configYamlPath = options.Value.Path;
+            _instructionsRoot = options.Value.InstructionsRoot;
             _configValidator = configValidator;
             _logger = logger;
             _current = LoadFromDisk();
@@ -125,11 +127,74 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
                 ?? throw new InvalidOperationException($"config.yaml at '{_configYamlPath}' deserialized to null.");
 
             config.Orchestrators ??= [];
+            ResolveInstructionsAndSchemaFiles(config);
             return config;
+        }
+
+        /// <summary>
+        /// Resolves <see cref="AgentDefinition.InstructionsFile"/> and
+        /// <see cref="ResponseFormatDefinition.SchemaFile"/> references (paths relative to the
+        /// configured <see cref="ConfigYamlOptions.InstructionsRoot"/>) into the in-memory
+        /// <see cref="AgentDefinition.Instructions"/> / <see cref="ResponseFormatDefinition.Schema"/>
+        /// values, letting long/complex prompts and JSON schemas live as standalone files instead
+        /// of inline YAML strings. An inline value, if also present, always wins (the file
+        /// reference is simply not read in that case, and a warning is logged).
+        /// </summary>
+        private void ResolveInstructionsAndSchemaFiles(PlatformConfig config)
+        {
+            foreach (var orchestrator in config.Orchestrators)
+            {
+                foreach (var agent in orchestrator.Agents)
+                {
+                    if (!string.IsNullOrWhiteSpace(agent.InstructionsFile))
+                    {
+                        if (!string.IsNullOrWhiteSpace(agent.Instructions))
+                        {
+                            _logger.LogWarning(
+                                "Orchestrator '{OrchestratorId}', agent '{AgentName}': both inline 'instructions' and 'instructionsFile' " +
+                                "are set - the inline value wins and 'instructionsFile' ({InstructionsFile}) is ignored.",
+                                orchestrator.Id, agent.Name, agent.InstructionsFile);
+                        }
+                        else
+                        {
+                            agent.Instructions = ReadInstructionsFile(orchestrator.Id, agent.Name, "instructionsFile", agent.InstructionsFile);
+                        }
+                    }
+
+                    if (agent.ResponseFormat is { } responseFormat && !string.IsNullOrWhiteSpace(responseFormat.SchemaFile))
+                    {
+                        if (!string.IsNullOrWhiteSpace(responseFormat.Schema))
+                        {
+                            _logger.LogWarning(
+                                "Orchestrator '{OrchestratorId}', agent '{AgentName}': both inline 'responseFormat.schema' and " +
+                                "'responseFormat.schemaFile' are set - the inline value wins and 'schemaFile' ({SchemaFile}) is ignored.",
+                                orchestrator.Id, agent.Name, responseFormat.SchemaFile);
+                        }
+                        else
+                        {
+                            responseFormat.Schema = ReadInstructionsFile(orchestrator.Id, agent.Name, "responseFormat.schemaFile", responseFormat.SchemaFile);
+                        }
+                    }
+                }
+            }
+        }
+
+        private string ReadInstructionsFile(string orchestratorId, string agentName, string fieldLabel, string relativePath)
+        {
+            var fullPath = Path.IsPathRooted(relativePath) ? relativePath : Path.Combine(_instructionsRoot, relativePath);
+            if (!File.Exists(fullPath))
+            {
+                throw new FileNotFoundException(
+                    $"Orchestrator '{orchestratorId}', agent '{agentName}': {fieldLabel} '{relativePath}' " +
+                    $"was not found under instructions root '{_instructionsRoot}' (resolved to '{fullPath}').",
+                    fullPath);
+            }
+
+            return File.ReadAllText(fullPath);
         }
     }
 
-    /// <summary>Binds the <c>ConfigYaml</c> appsettings.json section - just the file path.</summary>
+    /// <summary>Binds the <c>ConfigYaml</c> appsettings.json section.</summary>
     public sealed class ConfigYamlOptions
     {
         /// <summary>
@@ -137,5 +202,14 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
         /// "config.yaml".
         /// </summary>
         public string Path { get; set; } = "config.yaml";
+
+        /// <summary>
+        /// Root directory that <see cref="AgentDefinition.InstructionsFile"/> and
+        /// <see cref="ResponseFormatDefinition.SchemaFile"/> paths are resolved relative to
+        /// (relative to the content root unless absolute). Defaults to "instructions". Lets
+        /// agent prompts and JSON response schemas be authored as standalone files instead of
+        /// inline YAML strings - see <c>Service/config.sample.yaml</c> for examples.
+        /// </summary>
+        public string InstructionsRoot { get; set; } = "instructions";
     }
 }

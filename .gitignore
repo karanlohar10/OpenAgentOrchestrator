@@ -345,3 +345,10 @@ ASALocalRun/
 000-data/
 
 Application.UnitTests/TestArtifacts/
+
+# Spine Copilot Guidelines (auto-synced by lifecare-open-platform-copilot-guidelines extension)
+.github/copilot-instructions.md
+.github/instructions/
+.github/agents/
+.github/skills/
+.github/.lifecare-guidelines-sync

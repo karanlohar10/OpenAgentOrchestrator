@@ -11,6 +11,15 @@ namespace OpenAgentOrchestrator.Command.Domain.Model.Configuration
         public string? Instructions { get; set; }
 
         /// <summary>
+        /// Path (relative to <c>ConfigYaml.InstructionsRoot</c> - see <see cref="ConfigYamlOptions"/>)
+        /// to a text file whose contents are used as <see cref="Instructions"/> when
+        /// <see cref="Instructions"/> isn't set inline. Resolved once at config-load time by
+        /// <c>ConfigStore</c>; lets long/complex prompts live as separate files instead of
+        /// inline YAML strings. Ignored (with a warning) if <see cref="Instructions"/> is also set.
+        /// </summary>
+        public string? InstructionsFile { get; set; }
+
+        /// <summary>
         /// Provider id to use for this agent. Optional - when omitted, falls back to
         /// <c>AgentDefaults.DefaultProvider</c> (bound from appsettings.json) at agent-creation
         /// time. Falling back is only possible when a default is configured.
