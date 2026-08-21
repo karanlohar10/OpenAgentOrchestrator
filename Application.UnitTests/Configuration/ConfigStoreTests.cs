@@ -3,6 +3,9 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using OpenAgentOrchestrator.Command.Application.Configuration;
+using OpenAgentOrchestrator.Command.Domain.Model.Configuration;
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
 
 namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
 {
@@ -204,6 +207,104 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
             act.Should().Throw<FileNotFoundException>();
         }
 
+        [TestMethod]
+        public async Task ValidateAsync_WhenCandidateIsValid_ReturnsValidWithoutWritingToDisk()
+        {
+            // Arrange
+            File.WriteAllText(_configPath, ValidYaml);
+            var sut = CreateSut();
+            var candidate = ParseCandidate(ValidYaml.Replace("name: Orchestrator", "name: Renamed In Memory Only"));
+            var originalFileContent = File.ReadAllText(_configPath);
+
+            // Act
+            var result = await sut.ValidateAsync(candidate);
+
+            // Assert
+            result.IsValid.Should().BeTrue();
+            File.ReadAllText(_configPath).Should().Be(originalFileContent);
+            sut.GetOrchestrator("orch")!.Name.Should().Be("Orchestrator");
+        }
+
+        [TestMethod]
+        public async Task ValidateAsync_WhenCandidateIsInvalid_ReturnsErrors()
+        {
+            // Arrange
+            File.WriteAllText(_configPath, ValidYaml);
+            var sut = CreateSut();
+            var candidate = ParseCandidate("orchestrators: []");
+
+            // Act
+            var result = await sut.ValidateAsync(candidate);
+
+            // Assert
+            result.IsValid.Should().BeFalse();
+            result.Errors.Should().NotBeEmpty();
+        }
+
+        [TestMethod]
+        public async Task SaveAsync_WhenCandidateIsValid_WritesToDiskAndSwapsSnapshot()
+        {
+            // Arrange
+            File.WriteAllText(_configPath, ValidYaml);
+            var sut = CreateSut();
+            var candidate = ParseCandidate(ValidYaml.Replace("name: Orchestrator", "name: Renamed"));
+
+            // Act
+            var result = await sut.SaveAsync(candidate);
+
+            // Assert
+            result.IsValid.Should().BeTrue();
+            sut.GetOrchestrator("orch")!.Name.Should().Be("Renamed");
+            File.ReadAllText(_configPath).Should().Contain("Renamed");
+        }
+
+        [TestMethod]
+        public async Task SaveAsync_WhenCandidateHasRedactedProviderApiKey_KeepsRealApiKeyFromDisk()
+        {
+            // Arrange
+            File.WriteAllText(_configPath, ValidYaml);
+            var sut = CreateSut();
+            var candidate = ParseCandidate(ValidYaml.Replace("apiKey: \"key\"", "apiKey: \"***redacted***\""));
+
+            // Act
+            var result = await sut.SaveAsync(candidate);
+
+            // Assert
+            result.IsValid.Should().BeTrue();
+            sut.GetProvider("azure")!.ApiKey.Should().Be("key");
+        }
+
+        [TestMethod]
+        public async Task SaveAsync_WhenCandidateIsInvalid_DoesNotWriteToDiskOrSwapSnapshot()
+        {
+            // Arrange
+            File.WriteAllText(_configPath, ValidYaml);
+            var sut = CreateSut();
+            var candidate = ParseCandidate("orchestrators: []");
+            var originalFileContent = File.ReadAllText(_configPath);
+
+            // Act
+            var result = await sut.SaveAsync(candidate);
+
+            // Assert
+            result.IsValid.Should().BeFalse();
+            File.ReadAllText(_configPath).Should().Be(originalFileContent);
+            sut.GetOrchestrator("orch").Should().NotBeNull();
+        }
+
+        /// <summary>
+        /// Parses a standalone <see cref="PlatformConfig"/> from raw YAML text - deliberately a
+        /// fresh object graph independent of the store's in-memory snapshot, mirroring how a real
+        /// PUT/$validate request body (deserialized from JSON) is never aliased with
+        /// <c>ConfigStore</c>'s own <c>_current</c> field.
+        /// </summary>
+        private static PlatformConfig ParseCandidate(string yaml) =>
+            new DeserializerBuilder()
+                .WithNamingConvention(CamelCaseNamingConvention.Instance)
+                .IgnoreUnmatchedProperties()
+                .Build()
+                .Deserialize<PlatformConfig>(yaml);
+
         private ConfigStore CreateSut(string? configPath = null, string? instructionsRoot = null)
         {
             var options = Options.Create(new ConfigYamlOptions
@@ -212,7 +313,8 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
                 InstructionsRoot = instructionsRoot ?? Path.Combine(_tempDir, "instructions")
             });
             var validator = new ConfigValidator();
-            return new ConfigStore(options, validator, NullLogger<ConfigStore>.Instance);
+            var merge = new ConfigMerge();
+            return new ConfigStore(options, validator, merge, NullLogger<ConfigStore>.Instance);
         }
     }
 }

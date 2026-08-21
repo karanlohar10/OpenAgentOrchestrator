@@ -193,6 +193,8 @@ agents:
 | `POST /command/api/v1/sessions/{sessionId}/$resume` | Resumes a checkpointed session — see [Resuming a checkpointed session](#resuming-a-checkpointed-session) below. The orchestrator is resolved automatically from the session's durable checkpoint. |
 | `DELETE /command/api/v1/sessions/{sessionId}/checkpoint` | Deletes a session's durable checkpoint once it has reached a terminal state (`completed`/`failed`/`rejected`); `409 Conflict` if still `running`/`pending_approval`. |
 | `POST /command/api/v1/config/$reload` | Re-reads and re-validates `config.yaml` from disk; keeps the previous snapshot active if validation fails. |
+| `PUT /command/api/v1/config` | Full-replace save: accepts the complete config shape, resolves any blank/redacted-placeholder secret fields against the currently-loaded real values (see [secret-sentinel merge](#programmatic-config-editing-put--validate) below), validates, and — only if valid — writes `config.yaml` and reloads it. |
+| `POST /command/api/v1/config/$validate` | Same merge + validate pipeline as `PUT`, without writing to disk or changing the active config — useful for a "Validate" action that doesn't require saving first. |
 | `GET /query/api/v1/orchestrators-config` / `/{orchestratorId}` | Full orchestrator definitions (agents, tools, harness/shell-tool config) with secrets redacted. |
 | `GET /query/api/v1/orchestrators/{orchestratorId}` | Orchestrator summary. |
 | `GET /query/api/v1/providers` | Provider definitions with secrets redacted. |
@@ -200,6 +202,33 @@ agents:
 | `GET /query/api/v1/sessions/{sessionId}/checkpoints` | Durable step checkpoints (requires checkpointing to be enabled for the orchestrator). |
 
 `orchestratorId` is the `id` of an entry under `orchestrators:` in `config.yaml`.
+
+### Programmatic config editing (PUT / $validate)
+
+`PUT /command/api/v1/config` and `POST /command/api/v1/config/$validate` both accept the same
+JSON body shape as `GET /query/api/v1/orchestrators-config` + `/query/api/v1/providers` combined
+(`{ "providers": [...], "orchestrators": [...] }`), and exist so external tooling — such as the
+[OpenAgentOrchestratorAdmin](https://github.com/karanlohar10) visual workflow builder — can save
+a whole edited config back in one shot instead of hand-editing YAML.
+
+Because query endpoints always redact secret fields (`***redacted***`) before returning them, a
+tool that round-trips a `GET` response back through `PUT`/`$validate` would otherwise overwrite
+every real secret with that placeholder. To prevent that, both endpoints run a **secret-sentinel
+merge** first: any secret field (`provider.apiKey`, `tool.clientSecret`, `tool.headers` values,
+`webSearchTool.apiKey`) that arrives blank or still equal to `***redacted***` is replaced with the
+existing real value from the currently-loaded config, matched by provider id / orchestrator id +
+agent name + tool name (or header key). Only fields the caller actually retyped with a real value
+are overwritten. A **new** provider/tool/agent (one with no match in the current config) has
+nothing to fall back to — leaving its secret blank/redacted is reported as a validation error
+instead of silently accepting a placeholder.
+
+`PUT` writes to disk and reloads the in-memory config only if the merged candidate passes
+validation; `$validate` runs the identical pipeline but never writes or swaps the active config,
+so a caller can validate as often as it likes before committing to a save.
+
+By default these endpoints (like all others) accept cross-origin requests only from
+`http://localhost:5173` (the OpenAgentOrchestratorAdmin Vite dev server). Override this via the
+`Cors:AllowedOrigins` array in `appsettings.json` (or an environment variable) for other origins.
 
 ### Resuming a checkpointed session
 

@@ -11,7 +11,12 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
     /// </summary>
     public static class ConfigRedaction
     {
-        private const string RedactedPlaceholder = "***redacted***";
+        /// <summary>
+        /// Placeholder written in place of a real secret value on read-only query endpoints.
+        /// Public so <see cref="ConfigMerge"/> can recognize "this field wasn't actually retyped
+        /// by the user" on save (the secret-sentinel merge pattern) - see that class for details.
+        /// </summary>
+        public const string RedactedPlaceholder = "***redacted***";
 
         public static ProviderDefinition Redact(ProviderDefinition provider) => new()
         {

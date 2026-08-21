@@ -14,6 +14,23 @@ builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 
+// --- CORS (for the OpenAgentOrchestratorAdmin visual builder's Vite dev server) -----------
+//
+// The Admin app is a separate, standalone frontend project calling this Service purely over
+// HTTP - allowed origins are read from config (Cors:AllowedOrigins), never hardcoded, so this
+// stays dev-friendly by default but is still fully overridable per-environment.
+const string AdminCorsPolicy = "AdminCors";
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:5173"];
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy(AdminCorsPolicy, policy => policy
+        .WithOrigins(allowedOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod());
+});
+
 builder.Services.AddApiVersioning(options =>
 {
     options.DefaultApiVersion = new ApiVersion(1, 0);
@@ -87,6 +104,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors(AdminCorsPolicy);
 app.MapControllers();
 app.MapHealthChecks("/health");
 

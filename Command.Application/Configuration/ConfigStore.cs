@@ -34,6 +34,22 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
         /// returned to the caller instead of throwing.
         /// </summary>
         Task<ValidationResult> ReloadAsync(CancellationToken ct = default);
+
+        /// <summary>
+        /// Validates <paramref name="candidate"/> against the currently-loaded config: first
+        /// resolves any blank/redacted-placeholder secret fields against the real values already
+        /// in memory (see <see cref="IConfigMerge"/>), then runs the full validation pipeline.
+        /// Does not write to disk or change the in-memory snapshot - used for a "Validate" action
+        /// that doesn't require saving first.
+        /// </summary>
+        Task<ValidationResult> ValidateAsync(PlatformConfig candidate, CancellationToken ct = default);
+
+        /// <summary>
+        /// Merges secrets, validates, and - only if valid - serializes <paramref name="candidate"/>
+        /// back to <c>config.yaml</c> on disk and swaps it in as the new in-memory snapshot. On
+        /// validation failure, nothing is written and the previously loaded config remains active.
+        /// </summary>
+        Task<ValidationResult> SaveAsync(PlatformConfig candidate, CancellationToken ct = default);
     }
 
     public sealed class ConfigStore : IConfigStore
@@ -43,9 +59,15 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             .IgnoreUnmatchedProperties()
             .Build();
 
+        private static readonly ISerializer YamlSerializer = new SerializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .ConfigureDefaultValuesHandling(DefaultValuesHandling.OmitNull)
+            .Build();
+
         private readonly string _configYamlPath;
         private readonly string _instructionsRoot;
         private readonly IConfigValidator _configValidator;
+        private readonly IConfigMerge _configMerge;
         private readonly ILogger<ConfigStore> _logger;
         private readonly object _lock = new();
         private PlatformConfig _current;
@@ -53,11 +75,13 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
         public ConfigStore(
             IOptions<ConfigYamlOptions> options,
             IConfigValidator configValidator,
+            IConfigMerge configMerge,
             ILogger<ConfigStore> logger)
         {
             _configYamlPath = options.Value.Path;
             _instructionsRoot = options.Value.InstructionsRoot;
             _configValidator = configValidator;
+            _configMerge = configMerge;
             _logger = logger;
             _current = LoadFromDisk();
         }
@@ -111,6 +135,51 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
 
             _logger.LogInformation("Reloaded config.yaml from '{Path}'", _configYamlPath);
             return Task.FromResult(validation);
+        }
+
+        public Task<ValidationResult> ValidateAsync(PlatformConfig candidate, CancellationToken ct = default)
+        {
+            var (validation, _) = MergeAndValidate(candidate);
+            return Task.FromResult(validation);
+        }
+
+        public Task<ValidationResult> SaveAsync(PlatformConfig candidate, CancellationToken ct = default)
+        {
+            var (validation, merged) = MergeAndValidate(candidate);
+            if (!validation.IsValid)
+            {
+                _logger.LogWarning("Rejected config save: {Errors}", string.Join("; ", validation.Errors));
+                return Task.FromResult(validation);
+            }
+
+            var yaml = YamlSerializer.Serialize(merged);
+            File.WriteAllText(_configYamlPath, yaml);
+
+            lock (_lock)
+                _current = merged;
+
+            _logger.LogInformation("Saved config.yaml to '{Path}'", _configYamlPath);
+            return Task.FromResult(validation);
+        }
+
+        /// <summary>
+        /// Runs the merge (secret-sentinel resolution against the current in-memory config) +
+        /// validate pipeline shared by <see cref="ValidateAsync"/> and <see cref="SaveAsync"/>.
+        /// Merge errors (unresolved secrets on new entities) are folded into the returned
+        /// <see cref="ValidationResult"/> alongside the normal validator's errors.
+        /// </summary>
+        private (ValidationResult Validation, PlatformConfig Candidate) MergeAndValidate(PlatformConfig candidate)
+        {
+            candidate.Orchestrators ??= [];
+            var previous = GetConfig();
+
+            var mergeErrors = _configMerge.MergeSecrets(previous, candidate);
+
+            var validation = _configValidator.Validate(candidate);
+            validation.Errors.InsertRange(0, mergeErrors);
+            validation.IsValid = validation.Errors.Count == 0;
+
+            return (validation, candidate);
         }
 
         private PlatformConfig LoadFromDisk()

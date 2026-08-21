@@ -29,6 +29,7 @@ namespace OpenAgentOrchestrator.Command.Application
             services.Configure<ObservabilityOptions>(configuration.GetSection("Observability"));
 
             services.TryAddSingleton<IConfigValidator, ConfigValidator>();
+            services.TryAddSingleton<IConfigMerge, ConfigMerge>();
             services.TryAddSingleton<IConfigStore, ConfigStore>();
 
             services.TryAddSingleton<ISessionStore, InMemorySessionStore>();
