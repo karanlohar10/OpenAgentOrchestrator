@@ -182,3 +182,73 @@ runtime rather than baking it into the image:
 docker build -t open-agent-orchestrator -f Service/Dockerfile .
 docker run -p 8080:8080 -v ${PWD}/Service/config.yaml:/app/config.yaml open-agent-orchestrator
 ```
+
+## Observability
+
+The orchestrator is instrumented end-to-end with OpenTelemetry (traces, metrics, logs) and ships
+with a local Docker Compose stack for viewing them.
+
+**Instrumentation:**
+
+- **Plain chat agents** (`ChatClientAgent`) are instrumented at the agent boundary only, via
+  `AIAgent.AsBuilder().UseOpenTelemetry(sourceName, configure)` in `AgentFactory.CreateChatAgent`.
+- **Agent Harness agents** are instrumented via `HarnessAgentOptions.OpenTelemetrySourceName` in
+  `AgentFactory.CreateHarnessAgent`, which — per the Microsoft Agent Framework's design —
+  automatically instruments *both* the harness's internal chat client and its agent boundary from
+  a single source name (no separate call needed, avoiding duplicate spans).
+- The `ActivitySource`/`Meter` name (`Observability:AgentSourceName`, default
+  `OpenAgentOrchestrator.Agents`) and service name (`Observability:ServiceName`) are configurable
+  in `appsettings.json`. Whether prompts/responses are captured on spans is controlled by
+  `Observability:EnableSensitiveData` (`false` by default, `true` in `appsettings.Development.json`)
+  — this maps to the OTel GenAI convention env var
+  `OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT`, set once at startup in `Program.cs`.
+- ASP.NET Core, HttpClient (traces + metrics) and .NET runtime (metrics) instrumentation are also
+  registered in `Program.cs`, alongside the OTLP exporter for traces/metrics/logs.
+- The OTLP **endpoint is never hardcoded** — `AddOtlpExporter()` reads the standard
+  `OTEL_EXPORTER_OTLP_ENDPOINT` / `OTEL_EXPORTER_OTLP_PROTOCOL` environment variables natively;
+  these are only set in `docker-compose.yml`. If the Collector is unreachable, the OTLP exporter's
+  batch processor retries/drops in the background — it never throws into request-handling code,
+  so the app keeps working with the Collector down.
+
+**Target architecture:**
+
+```text
+.NET Agent Orchestrator
+        │
+        │ OTLP
+        ▼
+OpenTelemetry Collector
+     │    │    │
+     │    │    └── Logs   ──▶ debug exporter (collector stdout)
+     │    └────── Metrics ──▶ debug exporter (collector stdout)
+     └─────────── Traces  ──▶ Jaeger
+```
+
+**Files:**
+
+| File | Purpose |
+|---|---|
+| `Service/Program.cs` | OpenTelemetry SDK wiring (tracing/metrics/logging providers, OTLP exporter, ASP.NET Core/HttpClient/Runtime instrumentation). |
+| `Command.Application/Configuration/ObservabilityOptions.cs` | `Observability` config section (`ServiceName`, `AgentSourceName`, `EnableSensitiveData`). |
+| `Command.Application/Agents/AgentFactory.cs` | Agent-level (`UseOpenTelemetry`) and Harness-level (`OpenTelemetrySourceName`) instrumentation. |
+| `Service/appsettings.json` / `appsettings.Development.json` | `Observability` section + dev override for sensitive-data capture. |
+| `observability/otel-collector-config.yaml` | Collector receivers/processors/exporters/pipelines. |
+| `docker-compose.yml` | `orchestrator` + `otel-collector` + `jaeger` services. |
+
+**Run it:**
+
+```powershell
+Copy-Item Service\config.sample.yaml Service\config.yaml   # if you haven't already
+docker compose up --build
+```
+
+**Verify:**
+
+1. Send a request, e.g. `POST http://localhost:8080/command/api/v1/orchestrators/{id}/$execute`.
+2. **Traces** — open the Jaeger UI at <http://localhost:16686>, select the `OpenAgentOrchestrator`
+   service, and confirm spans for the HTTP request and the agent/chat-client calls.
+3. **Metrics** and **logs** — run `docker compose logs -f otel-collector` and confirm `debug`
+   exporter output for both (metrics appear as periodic batches; logs appear per request).
+4. **Resiliency** — run `docker compose stop otel-collector`, then repeat step 1: the request
+   should still succeed (telemetry export failures don't affect business logic).
+

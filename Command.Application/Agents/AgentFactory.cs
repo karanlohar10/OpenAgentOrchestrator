@@ -18,6 +18,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
         private readonly IShellToolFactory _shellToolFactory;
         private readonly IConfigStore _configStore;
         private readonly AgentDefaults _agentDefaults;
+        private readonly ObservabilityOptions _observability;
         private readonly ILogger<AgentFactory> _logger;
 
         public AgentFactory(
@@ -26,6 +27,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             IShellToolFactory shellToolFactory,
             IConfigStore configStore,
             IOptions<AgentDefaults> agentDefaults,
+            IOptions<ObservabilityOptions> observability,
             ILogger<AgentFactory> logger)
         {
             _chatClientFactory = chatClientFactory;
@@ -33,6 +35,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             _shellToolFactory = shellToolFactory;
             _configStore = configStore;
             _agentDefaults = agentDefaults.Value;
+            _observability = observability.Value;
             _logger = logger;
         }
 
@@ -98,8 +101,8 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             };
 
             return string.Equals(agentDef.AgentType, "harness", StringComparison.OrdinalIgnoreCase)
-                ? CreateHarnessAgent(agentDef, chatClient, chatOptions, contextProviders)
-                : CreateChatAgent(agentDef, chatClient, chatOptions, contextProviders);
+                ? CreateHarnessAgent(agentDef, chatClient, chatOptions, contextProviders, _observability)
+                : CreateChatAgent(agentDef, chatClient, chatOptions, contextProviders, _observability);
         }
 
         /// <summary>
@@ -116,9 +119,16 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
         /// agent's Name as its Id keeps ExecutorIds stable across process/agent re-creation as
         /// long as config.yaml doesn't change.
         /// </remarks>
-        private static ChatClientAgent CreateChatAgent(
-            AgentDefinition agentDef, IChatClient chatClient, ChatOptions chatOptions, IList<AIContextProvider>? contextProviders) =>
-            new(chatClient, new ChatClientAgentOptions
+        /// <remarks>
+        /// Instrumented at the agent boundary only (not the raw chat client) via
+        /// <c>AIAgent.AsBuilder().UseOpenTelemetry(...)</c>, per the Microsoft Agent Framework
+        /// observability guidance that instrumenting both layers produces duplicate span data.
+        /// </remarks>
+        private static AIAgent CreateChatAgent(
+            AgentDefinition agentDef, IChatClient chatClient, ChatOptions chatOptions, IList<AIContextProvider>? contextProviders,
+            ObservabilityOptions observability)
+        {
+            AIAgent agent = new ChatClientAgent(chatClient, new ChatClientAgentOptions
             {
                 Id = agentDef.Name,
                 Name = agentDef.Name,
@@ -126,14 +136,30 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
                 AIContextProviders = contextProviders
             });
 
+            return agent.AsBuilder()
+                .UseOpenTelemetry(observability.AgentSourceName, cfg => cfg.EnableSensitiveData = observability.EnableSensitiveData)
+                .Build();
+        }
+
         /// <summary>
         /// Builds a Microsoft Agent Framework Agent Harness agent (see
         /// https://learn.microsoft.com/agent-framework/concepts/harness) via
         /// <c>IChatClient.AsHarnessAgent</c>. Opt-in per agent via <c>agentType: harness</c> in
         /// config.yaml.
         /// </summary>
+        /// <remarks>
+        /// Setting <see cref="HarnessAgentOptions.OpenTelemetrySourceName"/> auto-instruments
+        /// *both* the harness's internal chat-client and agent boundary from the single source
+        /// name - no separate <c>UseOpenTelemetry</c> call is needed (and adding one would
+        /// duplicate spans). Sensitive-data capture for the harness path is controlled process-
+        /// wide via the standard <c>OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT</c>
+        /// environment variable (set once at startup in <c>Program.cs</c> from
+        /// <see cref="ObservabilityOptions.EnableSensitiveData"/>), since
+        /// <see cref="HarnessAgentOptions"/> has no dedicated sensitive-data flag.
+        /// </remarks>
         private static AIAgent CreateHarnessAgent(
-            AgentDefinition agentDef, IChatClient chatClient, ChatOptions chatOptions, IList<AIContextProvider>? contextProviders)
+            AgentDefinition agentDef, IChatClient chatClient, ChatOptions chatOptions, IList<AIContextProvider>? contextProviders,
+            ObservabilityOptions observability)
         {
             var harnessDef = agentDef.Harness ?? new HarnessOptionsDefinition();
 
@@ -146,7 +172,8 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
                 HarnessInstructions = harnessDef.HarnessInstructions,
                 MaxContextWindowTokens = harnessDef.MaxContextWindowTokens,
                 MaxOutputTokens = harnessDef.MaxOutputTokens,
-                AIContextProviders = contextProviders
+                AIContextProviders = contextProviders,
+                OpenTelemetrySourceName = observability.AgentSourceName
             });
 #pragma warning restore MAAI001
         }

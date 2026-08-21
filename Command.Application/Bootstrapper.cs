@@ -25,6 +25,7 @@ namespace OpenAgentOrchestrator.Command.Application
         {
             services.Configure<ConfigYamlOptions>(configuration.GetSection("ConfigYaml"));
             services.Configure<AgentDefaults>(configuration.GetSection("AgentDefaults"));
+            services.Configure<ObservabilityOptions>(configuration.GetSection("Observability"));
 
             services.TryAddSingleton<IConfigValidator, ConfigValidator>();
             services.TryAddSingleton<IConfigStore, ConfigStore>();

@@ -1,0 +1,42 @@
+# OpenTelemetry Collector configuration for OpenAgentOrchestrator's local Docker Compose
+# environment. Receives OTLP traces/metrics/logs from the .NET orchestrator, forwards traces to
+# Jaeger, and logs metrics/logs to stdout (via the built-in "debug" exporter) for verification -
+# no custom exporters, no telemetry written to files.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch: {}
+
+exporters:
+  # Jaeger's own OTLP/gRPC receiver (jaegertracing/all-in-one exposes it on 4317 inside the
+  # container). Not exposed to the host - only reachable via the collector on the compose network.
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
+
+  # Prints telemetry to the collector's own stdout - used here to verify metrics/logs are
+  # actually arriving, since no metrics/logs backend was required for this setup.
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/jaeger, debug]
+    metrics:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]

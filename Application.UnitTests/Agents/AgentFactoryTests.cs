@@ -44,6 +44,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             var agentDefinition = new AgentDefinition
@@ -56,18 +57,18 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
 
             // Act
             var agent = await sut.CreateAgentAsync(agentDefinition);
-            var chatClientAgent = (ChatClientAgent)agent;
 
             // Assert
-            agent.Should().BeOfType<ChatClientAgent>();
+            // The returned agent is instrumented with agent-level OpenTelemetry (see
+            // AgentFactory.CreateChatAgent), so it is no longer a bare ChatClientAgent - it is
+            // a DelegatingAIAgent wrapper around one. Name/Id are still proxied through from the
+            // inner ChatClientAgent, which is what matters for ExecutorId stability.
             agent.Name.Should().Be("planner");
             agent.Id.Should().Be("planner");
-            chatClientAgent.Instructions.Should().Be("Plan the work.");
-            chatClientAgent.ChatClient.Should().NotBeNull();
             usedProvider!.Id.Should().Be("azure");
             usedModel.Should().Be("gpt-4o-mini");
 
-            await RunAgentAsync(chatClientAgent, "hello");
+            await RunAgentAsync(agent, "hello");
             recordingClient.OptionsByCall.Should().ContainSingle();
             recordingClient.OptionsByCall[0]!.Instructions.Should().Be("Plan the work.");
         }
@@ -100,6 +101,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             var agentDefinition = new AgentDefinition
@@ -117,7 +119,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             };
 
             // Act
-            var agent = (ChatClientAgent)await sut.CreateAgentAsync(agentDefinition);
+            var agent = await sut.CreateAgentAsync(agentDefinition);
 
             await RunAgentAsync(agent, "hello");
 
@@ -145,6 +147,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             // Act
@@ -165,6 +168,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             // Act
@@ -197,6 +201,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             // Act
@@ -244,6 +249,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(defaultProvider: "azure", defaultModel: "gpt-4o-mini"),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             var agentDefinition = new AgentDefinition
@@ -256,7 +262,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var agent = await sut.CreateAgentAsync(agentDefinition);
 
             // Assert
-            agent.Should().BeOfType<ChatClientAgent>();
             usedProvider!.Id.Should().Be("azure");
             usedModel.Should().Be("gpt-4o-mini");
         }
@@ -271,6 +276,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             // Act
@@ -292,6 +298,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IShellToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
+                CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
             // Act
@@ -342,7 +349,10 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
         private static IOptions<AgentDefaults> CreateAgentDefaults(string? defaultProvider = null, string? defaultModel = null) =>
             Options.Create(new AgentDefaults { DefaultProvider = defaultProvider, DefaultModel = defaultModel });
 
-        private static async Task RunAgentAsync(ChatClientAgent agent, string message)
+        private static IOptions<ObservabilityOptions> CreateObservabilityOptions() =>
+            Options.Create(new ObservabilityOptions());
+
+        private static async Task RunAgentAsync(AIAgent agent, string message)
         {
             var session = await agent.CreateSessionAsync();
             await agent.RunAsync(message, session, options: null, cancellationToken: default);

@@ -14,6 +14,9 @@
     <!-- YAML config parsing -->
     <YamlDotNetVersion>16.3.0</YamlDotNetVersion>
 
+    <!-- OpenTelemetry (traces/metrics/logs, exported via OTLP to the Collector) -->
+    <OpenTelemetryVersion>1.17.0</OpenTelemetryVersion>
+
     <!-- Third-party test tooling -->
     <MsTestVersion>3.8.3</MsTestVersion>
   </PropertyGroup>
