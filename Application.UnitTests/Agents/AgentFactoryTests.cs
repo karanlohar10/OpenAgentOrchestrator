@@ -11,6 +11,7 @@ using OpenAgentOrchestrator.Command.Application.Configuration;
 using OpenAgentOrchestrator.Command.Application.Engine;
 using OpenAgentOrchestrator.Command.Application.ToolBinding;
 using OpenAgentOrchestrator.Command.Application.Tools;
+using OpenAgentOrchestrator.Command.Application.Tools.WebSearch;
 using OpenAgentOrchestrator.Command.Domain.Model.Configuration;
 
 namespace OpenAgentOrchestrator.Application.UnitTests.Agents
@@ -42,6 +43,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 chatClientFactory.Object,
                 toolBinderFactory.Object,
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -99,6 +101,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 chatClientFactory.Object,
                 toolBinderFactory.Object,
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -145,6 +148,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 chatClientFactory.Object,
                 Mock.Of<IToolBinderFactory>(),
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -166,6 +170,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IChatClientFactory>(),
                 Mock.Of<IToolBinderFactory>(),
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -199,6 +204,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 chatClientFactory.Object,
                 Mock.Of<IToolBinderFactory>(),
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -247,6 +253,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 chatClientFactory.Object,
                 Mock.Of<IToolBinderFactory>(),
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(defaultProvider: "azure", defaultModel: "gpt-4o-mini"),
                 CreateObservabilityOptions(),
@@ -274,6 +281,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IChatClientFactory>(),
                 Mock.Of<IToolBinderFactory>(),
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -296,6 +304,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Mock.Of<IChatClientFactory>(),
                 Mock.Of<IToolBinderFactory>(),
                 Mock.Of<IShellToolFactory>(),
+                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -308,6 +317,152 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             // Assert
             var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(action);
             exception.Message.Should().Contain("DefaultModel");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_WhenWebSearchToolEnabled_AttachesToolFromFactory()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var webSearchTool = AIFunctionFactory.Create(
+                (Func<string>)(() => "results"),
+                name: "web_search",
+                description: "Searches the web",
+                serializerOptions: null);
+
+            var webSearchToolFactory = new Mock<IWebSearchToolFactory>();
+            webSearchToolFactory
+                .Setup(factory => factory.Create(It.IsAny<WebSearchToolDefinition>()))
+                .Returns(webSearchTool);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                Mock.Of<IToolBinderFactory>(),
+                Mock.Of<IShellToolFactory>(),
+                webSearchToolFactory.Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "research-agent",
+                Instructions = "Research things.",
+                Provider = "azure",
+                Model = "gpt-4o-mini",
+                WebSearchTool = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "test-key" }
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+            await RunAgentAsync(agent, "hello");
+
+            // Assert
+            recordingClient.OptionsByCall.Should().ContainSingle();
+            recordingClient.OptionsByCall[0]!.Tools.Should().ContainSingle()
+                .Which.Name.Should().Be("web_search");
+            webSearchToolFactory.Verify(factory => factory.Create(agentDefinition.WebSearchTool), Times.Once);
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_WhenWebSearchToolDisabled_DoesNotAttachTool()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var webSearchToolFactory = new Mock<IWebSearchToolFactory>();
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                Mock.Of<IToolBinderFactory>(),
+                Mock.Of<IShellToolFactory>(),
+                webSearchToolFactory.Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "planner",
+                Instructions = "Plan the work.",
+                Provider = "azure",
+                Model = "gpt-4o-mini"
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+            await RunAgentAsync(agent, "hello");
+
+            // Assert
+            recordingClient.OptionsByCall.Should().ContainSingle();
+            recordingClient.OptionsByCall[0]!.Tools.Should().BeNull();
+            webSearchToolFactory.Verify(factory => factory.Create(It.IsAny<WebSearchToolDefinition>()), Times.Never);
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_HarnessAgentWithDisableWebSearchAndWebSearchTool_CreatesSuccessfully()
+        {
+            // Arrange - smoke test: harness agent creation must not throw when DisableWebSearch
+            // is set alongside a custom webSearchTool (the combination the docs recommend to
+            // avoid the agent receiving both a hosted and a custom search tool at once).
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var webSearchTool = AIFunctionFactory.Create(
+                (Func<string>)(() => "results"),
+                name: "web_search",
+                description: "Searches the web",
+                serializerOptions: null);
+
+            var webSearchToolFactory = new Mock<IWebSearchToolFactory>();
+            webSearchToolFactory
+                .Setup(factory => factory.Create(It.IsAny<WebSearchToolDefinition>()))
+                .Returns(webSearchTool);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                Mock.Of<IToolBinderFactory>(),
+                Mock.Of<IShellToolFactory>(),
+                webSearchToolFactory.Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "research-agent",
+                Instructions = "Research things.",
+                Provider = "azure",
+                Model = "gpt-4o-mini",
+                AgentType = "harness",
+                Harness = new HarnessOptionsDefinition { DisableWebSearch = true },
+                WebSearchTool = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "test-key" }
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+
+            // Assert
+            agent.Should().NotBeNull();
+            agent.Name.Should().Be("research-agent");
         }
 
         private static IConfigStore CreateConfigStore()

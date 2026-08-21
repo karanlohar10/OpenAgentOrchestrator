@@ -18,11 +18,16 @@ orchestrator workflows.
 - **[Agent Harness](https://learn.microsoft.com/agent-framework/concepts/harness)** support —
   any agent can be configured as `agentType: harness` to get the Microsoft Agent Framework's
   managed reasoning/tool-use loop, with configurable `HarnessInstructions`,
-  `MaxContextWindowTokens`, and `MaxOutputTokens`.
+  `MaxContextWindowTokens`, `MaxOutputTokens`, and `DisableWebSearch` (to opt out of the harness's
+  automatic hosted web-search tool - see [Configuring Agent Harness](#configuring-agent-harness)).
 - **[Shell Tools](https://learn.microsoft.com/agent-framework/integrations/by-component/tools/shell-tools)**
   support — any agent (harness or plain chat) can optionally be given a local shell tool
   (`LocalShellExecutor`), configurable per-agent: `stateless` vs `persistent` mode, an explicit
   `acknowledgeUnsafe` opt-in, and a configurable `requireApproval` flag for command execution.
+- **Custom, multi-provider web search tool** — any agent (harness or plain chat) can optionally
+  be given a real `web_search` tool backed by Tavily, Bing, Google Custom Search, or SerpApi
+  (selected via `webSearchTool.provider`), independent of the harness's own hosted web search
+  (see [Configuring the Web Search Tool](#configuring-the-web-search-tool)).
 - **Sequential workflow pattern** with optional durable checkpointing and human-in-the-loop
   review gates between steps, with resume/redo support (see [Resuming a checkpointed
   session](#resuming-a-checkpointed-session)).
@@ -34,13 +39,14 @@ orchestrator workflows.
   the `instructions/` folder (agent prompt/response-schema files — see [Instructions & Response
   Schema Files](#instructions--response-schema-files)).
 - **Command.Application** — the sequential workflow engine, checkpointing, in-memory session
-  store, agent factory (chat agents + harness agents), shell tool factory, chat-client factory,
-  MCP tool binding, and the YAML `ConfigStore`/`ConfigValidator`. Registered via a plain
+  store, agent factory (chat agents + harness agents), shell tool factory, web-search tool
+  factory (multi-provider: Tavily/Bing/Google/SerpApi), chat-client factory, MCP tool binding,
+  and the YAML `ConfigStore`/`ConfigValidator`. Registered via a plain
   `IServiceCollection.AddCommandApplication()` extension method.
 - **Command.Contract** — `ExecuteRequest`/`ExecuteResponse`/`ResumeRequest`/`ValidationResult` DTOs.
 - **Command.Domain.Model** — `PlatformConfig` and the orchestrator/agent/provider/tool
   configuration model types (parsed from `config.yaml`), including `AgentType`, `HarnessOptions`,
-  and `ShellToolDefinition`.
+  `ShellToolDefinition`, and `WebSearchToolDefinition`.
 - **Query.Application** — thin read-side service projecting config/session/checkpoint state into
   `Query.Domain.Model` response DTOs, registered via `AddQueryApplication()`.
 - **Query.Domain.Model** — `OrchestratorSummaryResponse`, `SessionStatusResponse`,
@@ -77,11 +83,22 @@ agents:
       harnessInstructions: "Use tools deliberately and report verified results."
       maxContextWindowTokens: 128000
       maxOutputTokens: 16384
+      disableWebSearch: true   # see note below
 ```
 
 This maps to `chatClient.AsHarnessAgent(new HarnessAgentOptions { ... })` in
 `AgentFactory.CreateHarnessAgent`. Omit `agentType` (or set it to `chat`, the default) for a plain
 `ChatClientAgent`.
+
+**`disableWebSearch`** — by default (`false`, matching the framework's own default), the harness
+automatically attaches a model-provider-hosted web search tool. Some `IChatClient`
+providers/deployments reject its request parameters outright — for example, some Azure OpenAI
+deployments respond with `HTTP 400 (invalid_request_error: unknown_parameter)` /
+`Unknown parameter: 'web_search_options'`. Set `disableWebSearch: true` when:
+- your provider doesn't support the hosted tool (as above), or
+- you're attaching your own [web search tool](#configuring-the-web-search-tool) instead — per
+  Microsoft's guidance, leaving this `false` while also adding a custom search tool gives the
+  agent *two* search tools at once, which is redundant and can confuse the model.
 
 ## Configuring Shell Tools
 
@@ -98,6 +115,49 @@ Any agent (harness or chat) can be given a local shell tool by adding a `shellTo
 This wires up `LocalShellExecutor`/`ShellEnvironmentProvider` (`Microsoft.Agents.AI.Tools.Shell`)
 and attaches `.AsAIFunction(requireApproval: ...)` to the agent's tool list, with the executor's
 lifetime scoped to the agent. See `Command.Application/Tools/ShellToolFactory.cs`.
+
+## Configuring the Web Search Tool
+
+Any agent (harness or chat) can be given a real, working `web_search` tool by adding a
+`webSearchTool:` block. Unlike the harness's own hosted web search (see
+[`disableWebSearch`](#configuring-agent-harness)), this tool calls a genuine third-party search
+REST API of your choosing and works with any `IChatClient` provider:
+
+```yaml
+    webSearchTool:
+      enabled: true
+      provider: tavily           # "tavily" (default) | "bing" | "google" | "serpapi"
+      apiKey: "<REAL_PROVIDER_API_KEY>"
+      maxResults: 5
+      searchDepth: basic         # Tavily-only: "basic" | "advanced" | "fast" | "ultra-fast"
+      # searchEngineId: "<CX_ID>"  # required when provider: google
+      # searchEngine: google       # SerpApi-only: which engine SerpApi should proxy
+```
+
+Supported providers (selected via `provider`, case-insensitive):
+
+| Provider  | Required fields                       | Notes                                             |
+|-----------|----------------------------------------|----------------------------------------------------|
+| `tavily`  | `apiKey`                               | Default. Purpose-built for LLM/agent search; simple REST API, free tier. Also supports `maxResults`, `searchDepth`. |
+| `bing`    | `apiKey`                               | Bing Web Search API v7. Also supports `maxResults`. |
+| `google`  | `apiKey`, `searchEngineId`             | Google Custom Search JSON API; `searchEngineId` is the Programmable Search Engine "cx" id. Also supports `maxResults` (max 10/request). |
+| `serpapi` | `apiKey`                               | SerpApi; `searchEngine` selects the underlying engine it proxies to (default `google`). Also supports `maxResults`. |
+
+This wires up an `AIFunction` named `web_search` (via `AIFunctionFactory.Create`) that calls the
+selected provider's REST API through `IHttpClientFactory` and returns normalized
+title/url/snippet results to the model. See
+`Command.Application/Tools/WebSearch/WebSearchToolFactory.cs` and the per-provider
+`IWebSearchProvider` implementations alongside it.
+
+**Interaction with `harness.disableWebSearch`** (harness agents only): these two settings are
+independent, so choose the combination that fits your scenario:
+
+| `harness.disableWebSearch` | `webSearchTool.enabled` | Result                                              |
+|----------------------------|--------------------------|------------------------------------------------------|
+| `false` (default)          | `false` (default)        | Only the hosted tool (if the provider supports it). |
+| `true`                     | `true`                    | **Recommended when adding a custom tool** — only the custom tool, avoiding the redundant/confusing "two search tools" case. |
+| `false`                    | `true`                    | Both tools attached at once — redundant, not recommended. |
+| `true`                     | `false`                   | No web search at all. |
 
 ## Instructions & Response Schema Files
 
@@ -170,6 +230,9 @@ completed step.
   `clientSecret`, and header values via `ConfigRedaction` before serializing the response.
 - Shell tools are disabled by default (`shellTool.enabled: false`) and require an explicit
   `acknowledgeUnsafe: true` to turn on, since local shell execution is inherently unsafe.
+- Web-search tool API keys (`webSearchTool.apiKey`) are stored directly in `config.yaml`, like
+  other secrets in this project, and are redacted by `ConfigRedaction` before being returned over
+  query endpoints.
 - There is no authentication/authorization wired up by default (this is a hackathon fork with
   Spine platform auth removed) — do not expose this service on a public network as-is.
 

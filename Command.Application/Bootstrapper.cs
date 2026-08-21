@@ -11,6 +11,7 @@ namespace OpenAgentOrchestrator.Command.Application
     using OpenAgentOrchestrator.Command.Application.Sessions;
     using OpenAgentOrchestrator.Command.Application.ToolBinding;
     using OpenAgentOrchestrator.Command.Application.Tools;
+    using OpenAgentOrchestrator.Command.Application.Tools.WebSearch;
 
     /// <summary>
     /// Registers Command-side application services for orchestrator workflows: file-based
@@ -62,6 +63,13 @@ namespace OpenAgentOrchestrator.Command.Application
 
             services.TryAddSingleton<IChatClientFactory, ChatClientFactory>();
             services.TryAddSingleton<IShellToolFactory, ShellToolFactory>();
+
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IWebSearchProvider, TavilySearchProvider>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IWebSearchProvider, BingSearchProvider>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IWebSearchProvider, GoogleSearchProvider>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IWebSearchProvider, SerpApiSearchProvider>());
+            services.TryAddSingleton<IWebSearchToolFactory, WebSearchToolFactory>();
+
             services.TryAddSingleton<IAgentFactory, AgentFactory>();
 
             return services;

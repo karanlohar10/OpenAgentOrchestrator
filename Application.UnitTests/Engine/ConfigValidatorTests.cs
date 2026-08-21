@@ -238,6 +238,94 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
             Assert.IsTrue(result.IsValid);
         }
 
+        [TestMethod]
+        public void Validate_WebSearchToolWithValidTavilyConfig_ReturnsValid()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
+            {
+                Enabled = true,
+                Provider = "tavily",
+                ApiKey = "test-key"
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsTrue(result.IsValid);
+        }
+
+        [TestMethod]
+        public void Validate_WebSearchToolWithInvalidProvider_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
+            {
+                Enabled = true,
+                Provider = "not-a-real-provider",
+                ApiKey = "test-key"
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("invalid provider")));
+        }
+
+        [TestMethod]
+        public void Validate_WebSearchToolWithoutApiKey_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
+            {
+                Enabled = true,
+                Provider = "tavily",
+                ApiKey = ""
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("apiKey is required")));
+        }
+
+        [TestMethod]
+        public void Validate_WebSearchToolWithGoogleProviderMissingSearchEngineId_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
+            {
+                Enabled = true,
+                Provider = "google",
+                ApiKey = "test-key"
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("searchEngineId")));
+        }
+
+        [TestMethod]
+        public void Validate_WebSearchToolDisabled_SkipsValidation()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
+            {
+                Enabled = false,
+                Provider = "not-a-real-provider",
+                ApiKey = ""
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsTrue(result.IsValid);
+        }
+
         private static PlatformConfig CreateValidConfig() => new()
         {
             Orchestrators =

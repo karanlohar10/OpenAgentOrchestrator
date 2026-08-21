@@ -7,6 +7,7 @@ using OpenAgentOrchestrator.Command.Application.Configuration;
 using OpenAgentOrchestrator.Command.Application.Engine;
 using OpenAgentOrchestrator.Command.Application.ToolBinding;
 using OpenAgentOrchestrator.Command.Application.Tools;
+using OpenAgentOrchestrator.Command.Application.Tools.WebSearch;
 using OpenAgentOrchestrator.Command.Domain.Model.Configuration;
 
 namespace OpenAgentOrchestrator.Command.Application.Agents
@@ -16,6 +17,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
         private readonly IChatClientFactory _chatClientFactory;
         private readonly IToolBinderFactory _toolBinderFactory;
         private readonly IShellToolFactory _shellToolFactory;
+        private readonly IWebSearchToolFactory _webSearchToolFactory;
         private readonly IConfigStore _configStore;
         private readonly AgentDefaults _agentDefaults;
         private readonly ObservabilityOptions _observability;
@@ -25,6 +27,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             IChatClientFactory chatClientFactory,
             IToolBinderFactory toolBinderFactory,
             IShellToolFactory shellToolFactory,
+            IWebSearchToolFactory webSearchToolFactory,
             IConfigStore configStore,
             IOptions<AgentDefaults> agentDefaults,
             IOptions<ObservabilityOptions> observability,
@@ -33,6 +36,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             _chatClientFactory = chatClientFactory;
             _toolBinderFactory = toolBinderFactory;
             _shellToolFactory = shellToolFactory;
+            _webSearchToolFactory = webSearchToolFactory;
             _configStore = configStore;
             _agentDefaults = agentDefaults.Value;
             _observability = observability.Value;
@@ -85,6 +89,18 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
                 {
                     _logger.LogDebug("Attached shell tool (mode '{Mode}', requireApproval={RequireApproval}) to agent '{AgentName}'",
                         shellToolDef.Mode, shellToolDef.RequireApproval, agentDef.Name);
+                }
+            }
+
+            if (agentDef.WebSearchTool is { Enabled: true } webSearchToolDef)
+            {
+                var webSearchTool = _webSearchToolFactory.Create(webSearchToolDef);
+                tools.Add(webSearchTool);
+
+                if (_logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug("Attached web search tool (provider '{Provider}') to agent '{AgentName}'",
+                        webSearchToolDef.Provider, agentDef.Name);
                 }
             }
 
@@ -172,6 +188,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
                 HarnessInstructions = harnessDef.HarnessInstructions,
                 MaxContextWindowTokens = harnessDef.MaxContextWindowTokens,
                 MaxOutputTokens = harnessDef.MaxOutputTokens,
+                DisableWebSearch = harnessDef.DisableWebSearch,
                 AIContextProviders = contextProviders,
                 OpenTelemetrySourceName = observability.AgentSourceName
             });

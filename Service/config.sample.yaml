@@ -45,11 +45,34 @@ orchestrators:
           harnessInstructions: "Use tools deliberately and report verified results."
           maxContextWindowTokens: 128000
           maxOutputTokens: 16384
+          # Disables the harness's automatic, model-provider-hosted web search tool. Some
+          # IChatClient providers/deployments reject its request parameters outright (for
+          # example, certain Azure OpenAI deployments respond with
+          # "HTTP 400 unknown_parameter: web_search_options"). Set true whenever you attach your
+          # own webSearchTool below - per Microsoft's guidance, leaving this false while also
+          # adding a custom search tool gives the agent two search tools at once, which is
+          # redundant and can confuse the model. Only leave this false (the framework default) if
+          # you want the hosted tool and your provider supports it; only set true without adding
+          # a webSearchTool if you want no web search at all.
+          # See https://learn.microsoft.com/agent-framework/concepts/harness.
+          disableWebSearch: true
         shellTool:
           enabled: false          # set true to attach a local shell tool to this agent
           mode: stateless          # "stateless" (fresh shell per call) or "persistent" (reused)
           acknowledgeUnsafe: false # must be explicitly true to enable - shell execution is unsafe
           requireApproval: true    # require human/caller approval before each shell command runs
+        # Custom web-search tool - a real, working replacement for the disabled hosted tool
+        # above. "provider" selects which search REST API to call; each provider has its own
+        # required fields (see the per-provider comments). The apiKey is stored directly in
+        # config.yaml, consistent with this project's "secrets live in config.yaml" convention.
+        webSearchTool:
+          enabled: true
+          provider: tavily          # "tavily" (default) | "bing" | "google" | "serpapi"
+          apiKey: "<REPLACE_WITH_REAL_TAVILY_API_KEY>"
+          maxResults: 5
+          searchDepth: basic         # Tavily-only: "basic" | "advanced" | "fast" | "ultra-fast"
+          # searchEngineId: "<GOOGLE_CUSTOM_SEARCH_ENGINE_CX_ID>"  # required when provider: google
+          # searchEngine: google     # SerpApi-only: which engine SerpApi should proxy (default "google")
         # MCP tool secured with a static API key sent as a request header. authType "apiKey" is
         # the default (shown here explicitly for clarity) - headers are literal name/value pairs
         # stored directly in config.yaml, which is gitignored and must never be committed.

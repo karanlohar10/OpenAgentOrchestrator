@@ -61,6 +61,15 @@ namespace OpenAgentOrchestrator.Command.Domain.Model.Configuration
         /// true. See https://learn.microsoft.com/agent-framework/integrations/by-component/tools/shell-tools.
         /// </summary>
         public ShellToolDefinition? ShellTool { get; set; }
+
+        /// <summary>
+        /// Configures an optional custom web-search tool for this agent (either a plain chat
+        /// agent or a harness agent), backed by a real search-provider REST API. Disabled unless
+        /// <see cref="WebSearchToolDefinition.Enabled"/> is true. Independent of
+        /// <see cref="HarnessOptionsDefinition.DisableWebSearch"/> - see that property's docs for
+        /// how the two interact.
+        /// </summary>
+        public WebSearchToolDefinition? WebSearchTool { get; set; }
     }
 
     /// <summary>
@@ -82,6 +91,24 @@ namespace OpenAgentOrchestrator.Command.Domain.Model.Configuration
 
         /// <summary>Maximum number of tokens the harness will request per model response.</summary>
         public int? MaxOutputTokens { get; set; }
+
+        /// <summary>
+        /// Disables the harness's automatically-attached, model-provider-hosted web search tool
+        /// (maps to <c>HarnessAgentOptions.DisableWebSearch</c>). Defaults to <see langword="false"/>
+        /// (hosted web search enabled), matching the framework's own default.
+        /// </summary>
+        /// <remarks>
+        /// Some <c>IChatClient</c> providers/deployments reject the hosted tool's provider-specific
+        /// request parameters (for example, an Azure OpenAI deployment returning
+        /// <c>HTTP 400 unknown_parameter: web_search_options</c>). Set this to <see langword="true"/>
+        /// when the configured provider doesn't support the hosted tool, or when you're attaching
+        /// your own search tool via <see cref="AgentDefinition.WebSearchTool"/> instead - per
+        /// Microsoft's guidance, leaving this <see langword="false"/> while also adding a custom
+        /// web-search tool gives the agent two search tools at once, which is redundant and can
+        /// confuse the model. See
+        /// https://learn.microsoft.com/agent-framework/concepts/harness.
+        /// </remarks>
+        public bool DisableWebSearch { get; set; }
     }
 
     /// <summary>
@@ -114,5 +141,51 @@ namespace OpenAgentOrchestrator.Command.Domain.Model.Configuration
         /// set false only for trusted, fully-automated scenarios.
         /// </summary>
         public bool RequireApproval { get; set; } = true;
+    }
+
+    /// <summary>
+    /// Configures a custom web-search tool for an agent, backed by a real third-party search
+    /// provider's REST API (chosen via <see cref="Provider"/>). Independent of any
+    /// model-provider-hosted web search the harness may attach automatically - see
+    /// <see cref="HarnessOptionsDefinition.DisableWebSearch"/>.
+    /// </summary>
+    public sealed class WebSearchToolDefinition
+    {
+        /// <summary>Whether the web-search tool is attached to this agent at all. Defaults to false.</summary>
+        public bool Enabled { get; set; }
+
+        /// <summary>
+        /// Which search-provider REST API to call: "tavily" (default), "bing", "google", or
+        /// "serpapi". Case-insensitive. An unrecognized value fails config validation with a
+        /// clear error at startup.
+        /// </summary>
+        public string Provider { get; set; } = "tavily";
+
+        /// <summary>
+        /// The chosen provider's API key, stored directly in config.yaml (consistent with this
+        /// project's "secrets live in config.yaml" convention for tools/providers/agents).
+        /// </summary>
+        public required string ApiKey { get; set; }
+
+        /// <summary>Maximum number of search results to return to the model. Defaults to 5.</summary>
+        public int MaxResults { get; set; } = 5;
+
+        /// <summary>
+        /// Tavily-only: search thoroughness/latency trade-off - "basic" (default), "advanced",
+        /// "fast", or "ultra-fast". Ignored by other providers.
+        /// </summary>
+        public string SearchDepth { get; set; } = "basic";
+
+        /// <summary>
+        /// Google Custom Search-only: the Programmable Search Engine ID ("cx" parameter).
+        /// Required when <see cref="Provider"/> is "google"; ignored by other providers.
+        /// </summary>
+        public string? SearchEngineId { get; set; }
+
+        /// <summary>
+        /// SerpApi-only: which underlying search engine SerpApi should proxy to (for example
+        /// "google", "bing"). Defaults to "google". Ignored by other providers.
+        /// </summary>
+        public string SearchEngine { get; set; } = "google";
     }
 }

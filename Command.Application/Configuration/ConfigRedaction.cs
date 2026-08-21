@@ -44,7 +44,19 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             ResponseFormat = agent.ResponseFormat,
             AgentType = agent.AgentType,
             Harness = agent.Harness,
-            ShellTool = agent.ShellTool
+            ShellTool = agent.ShellTool,
+            WebSearchTool = agent.WebSearchTool is null ? null : Redact(agent.WebSearchTool)
+        };
+
+        public static WebSearchToolDefinition Redact(WebSearchToolDefinition webSearchTool) => new()
+        {
+            Enabled = webSearchTool.Enabled,
+            Provider = webSearchTool.Provider,
+            ApiKey = string.IsNullOrEmpty(webSearchTool.ApiKey) ? webSearchTool.ApiKey : RedactedPlaceholder,
+            MaxResults = webSearchTool.MaxResults,
+            SearchDepth = webSearchTool.SearchDepth,
+            SearchEngineId = webSearchTool.SearchEngineId,
+            SearchEngine = webSearchTool.SearchEngine
         };
 
         public static ToolDefinition Redact(ToolDefinition tool) => new()

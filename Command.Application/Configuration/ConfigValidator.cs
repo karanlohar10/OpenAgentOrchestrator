@@ -25,6 +25,7 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
         private static readonly HashSet<string> ValidResponseFormatTypes = ["json_schema", "json_object", "text"];
         private static readonly HashSet<string> ValidAgentTypes = ["chat", "harness"];
         private static readonly HashSet<string> ValidShellToolModes = ["stateless", "persistent"];
+        private static readonly HashSet<string> ValidWebSearchProviders = ["tavily", "bing", "google", "serpapi"];
 
         private readonly AgentDefaults _agentDefaults;
 
@@ -184,6 +185,9 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
 
             if (agent.ShellTool is { Enabled: true } shellTool)
                 ValidateShellTool(orchestrator, agent, shellTool, result);
+
+            if (agent.WebSearchTool is { Enabled: true } webSearchTool)
+                ValidateWebSearchTool(orchestrator, agent, webSearchTool, result);
         }
 
         private static void ValidateAgentType(OrchestratorDefinition orchestrator, AgentDefinition agent, ValidationResult result)
@@ -207,6 +211,23 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
                 result.Errors.Add(
                     $"{prefix}: enabled but 'acknowledgeUnsafe: true' was not set. Shell execution can modify " +
                     "files, launch processes, and access credentials/network on the host - this must be explicitly acknowledged.");
+            }
+        }
+
+        private static void ValidateWebSearchTool(OrchestratorDefinition orchestrator, AgentDefinition agent, WebSearchToolDefinition webSearchTool, ValidationResult result)
+        {
+            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', webSearchTool";
+
+            if (!ValidWebSearchProviders.Contains(webSearchTool.Provider.ToLowerInvariant()))
+                result.Errors.Add($"{prefix}: invalid provider '{webSearchTool.Provider}'. Must be one of: {string.Join(", ", ValidWebSearchProviders)}.");
+
+            if (string.IsNullOrWhiteSpace(webSearchTool.ApiKey))
+                result.Errors.Add($"{prefix}: apiKey is required.");
+
+            if (string.Equals(webSearchTool.Provider, "google", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(webSearchTool.SearchEngineId))
+            {
+                result.Errors.Add($"{prefix}: provider 'google' requires searchEngineId (the Custom Search Engine 'cx' id).");
             }
         }
 
