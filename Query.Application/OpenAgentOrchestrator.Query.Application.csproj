@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Command.Application\OpenAgentOrchestrator.Command.Application.csproj" />
+    <ProjectReference Include="..\Command.Domain.Model\OpenAgentOrchestrator.Command.Domain.Model.csproj" />
+    <ProjectReference Include="..\Query.Domain.Model\OpenAgentOrchestrator.Query.Domain.Model.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="$(MicrosoftExtensionsVersion)" />
+  </ItemGroup>
+
+</Project>

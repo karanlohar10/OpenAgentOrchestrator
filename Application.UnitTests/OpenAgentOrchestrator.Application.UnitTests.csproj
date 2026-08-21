@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="FluentAssertions" Version="6.12.0" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="$(MicrosoftAgentsAIVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Harness" Version="$(MicrosoftAgentsAIVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Tools.Shell" Version="$(MicrosoftAgentsAIToolsShellVersion)" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.7.0" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.13.0" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <PackageReference Include="MSTest.TestAdapter" Version="$(MsTestVersion)" />
+    <PackageReference Include="MSTest.TestFramework" Version="$(MsTestVersion)" />
+    <PackageReference Include="coverlet.collector" Version="6.0.2">
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Command.Application\OpenAgentOrchestrator.Command.Application.csproj" />
+    <ProjectReference Include="..\Command.Contract\OpenAgentOrchestrator.Command.Contract.csproj" />
+    <ProjectReference Include="..\Command.Domain.Model\OpenAgentOrchestrator.Command.Domain.Model.csproj" />
+    <ProjectReference Include="..\Query.Application\OpenAgentOrchestrator.Query.Application.csproj" />
+    <ProjectReference Include="..\Query.Domain.Model\OpenAgentOrchestrator.Query.Domain.Model.csproj" />
+  </ItemGroup>
+
+</Project>

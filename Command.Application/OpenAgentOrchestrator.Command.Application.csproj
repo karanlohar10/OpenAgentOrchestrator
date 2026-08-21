@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Command.Contract\OpenAgentOrchestrator.Command.Contract.csproj" />
+    <ProjectReference Include="..\Command.Domain.Model\OpenAgentOrchestrator.Command.Domain.Model.csproj" />
+    <ProjectReference Include="..\Query.Domain.Model\OpenAgentOrchestrator.Query.Domain.Model.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
+    <PackageReference Include="Microsoft.Agents.AI" Version="$(MicrosoftAgentsAIVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Harness" Version="$(MicrosoftAgentsAIVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Tools.Shell" Version="$(MicrosoftAgentsAIToolsShellVersion)" />
+    <PackageReference Include="Microsoft.Agents.AI.Workflows" Version="$(MicrosoftAgentsAIVersion)" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.7.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.7.0" />
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageReference Include="ModelContextProtocol" Version="1.4.0" />
+    <PackageReference Include="YamlDotNet" Version="$(YamlDotNetVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenAgentOrchestrator.Application.UnitTests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <AssemblyName>OpenAgentOrchestrator.Service</AssemblyName>
+    <RootNamespace>OpenAgentOrchestrator.Service</RootNamespace>
+    <UserSecretsId>7e6a2f3d-8c1b-4a5e-9d0f-3b2c6e8a1f4d</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Asp.Versioning.Mvc" Version="$(AspVersioningVersion)" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.UserSecrets" Version="$(MicrosoftExtensionsVersion)" />
+    <PackageReference Include="Microsoft.OpenApi" Version="$(MicrosoftOpenApiVersion)" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="$(SwashbuckleVersion)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Command.Application\OpenAgentOrchestrator.Command.Application.csproj" />
+    <ProjectReference Include="..\Command.Contract\OpenAgentOrchestrator.Command.Contract.csproj" />
+    <ProjectReference Include="..\Command.Domain.Model\OpenAgentOrchestrator.Command.Domain.Model.csproj" />
+    <ProjectReference Include="..\Query.Application\OpenAgentOrchestrator.Query.Application.csproj" />
+    <ProjectReference Include="..\Query.Domain.Model\OpenAgentOrchestrator.Query.Domain.Model.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Update="appsettings.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      <CopyToPublishDirectory>Never</CopyToPublishDirectory>
+    </Content>
+    <Content Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="config.sample.yaml">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <!-- config.yaml itself (real secrets) is intentionally NOT bundled as MSBuild Content - it is
+         gitignored and must be supplied alongside the built app at deploy time. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OpenAgentOrchestrator.Application.UnitTests" />
+  </ItemGroup>
+
+</Project>

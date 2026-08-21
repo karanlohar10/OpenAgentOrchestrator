@@ -1,0 +1,20 @@
+<Project>
+  <PropertyGroup>
+    <!-- Third-party -->
+    <AspVersioningVersion>8.1.1</AspVersioningVersion>
+    <MicrosoftOpenApiVersion>2.4.1</MicrosoftOpenApiVersion>
+    <SwashbuckleVersion>10.1.2</SwashbuckleVersion>
+
+    <MicrosoftExtensionsVersion>10.0.9</MicrosoftExtensionsVersion>
+
+    <!-- Microsoft Agent Framework -->
+    <MicrosoftAgentsAIVersion>1.18.0</MicrosoftAgentsAIVersion>
+    <MicrosoftAgentsAIToolsShellVersion>1.18.0-preview.260818.1</MicrosoftAgentsAIToolsShellVersion>
+
+    <!-- YAML config parsing -->
+    <YamlDotNetVersion>16.3.0</YamlDotNetVersion>
+
+    <!-- Third-party test tooling -->
+    <MsTestVersion>3.8.3</MsTestVersion>
+  </PropertyGroup>
+</Project>

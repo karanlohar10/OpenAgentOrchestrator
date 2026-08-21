@@ -1,0 +1,78 @@
+# OpenAgentOrchestrator - sample configuration
+#
+# Copy this file to "config.yaml" (same folder) and fill in real values.
+# config.yaml is gitignored - it holds real secrets (API keys, client secrets, header values)
+# directly and must NEVER be committed. This file only ever contains placeholders.
+#
+# Reload after editing config.yaml without restarting the service:
+#   POST /command/api/v1/config/$reload
+
+providers:
+  - id: azure-openai-main
+    type: azure-openai
+    endpoint: "https://<your-resource>.openai.azure.com/"
+    apiKey: "<REPLACE_WITH_REAL_AZURE_OPENAI_API_KEY>"
+
+orchestrators:
+  - id: research-writer
+    name: Research & Writer
+    description: >-
+      Sample sequential orchestrator: a Harness research agent (with shell tool access) hands
+      its findings to a plain chat agent that writes the final summary.
+    pattern: sequential
+    checkpointing:
+      enabled: true
+      humanInLoop:
+        enabled: false
+    agents:
+      # Agent Harness agent (see https://learn.microsoft.com/agent-framework/concepts/harness),
+      # with a local shell tool attached (see
+      # https://learn.microsoft.com/agent-framework/integrations/by-component/tools/shell-tools).
+      - name: research-agent
+        agentType: harness
+        provider: azure-openai-main
+        model: "gpt-4o"
+        instructions: >-
+          You are a research assistant focused on academic and verifiable sources. Use the shell
+          tool deliberately (e.g. to inspect local files) and report only verified results.
+        harness:
+          harnessInstructions: "Use tools deliberately and report verified results."
+          maxContextWindowTokens: 128000
+          maxOutputTokens: 16384
+        shellTool:
+          enabled: false          # set true to attach a local shell tool to this agent
+          mode: stateless          # "stateless" (fresh shell per call) or "persistent" (reused)
+          acknowledgeUnsafe: false # must be explicitly true to enable - shell execution is unsafe
+          requireApproval: true    # require human/caller approval before each shell command runs
+
+      # Plain chat agent (default agentType).
+      - name: writer-agent
+        agentType: chat
+        provider: azure-openai-main
+        model: "gpt-4o"
+        instructions: >-
+          You are a technical writer. Turn the research findings you receive into a concise,
+          well-structured summary for a general audience.
+
+  # A second sample orchestrator showing an MCP tool with bearer (OAuth2 client-credentials) auth.
+  - id: openehr-assistant
+    name: OpenEHR Assistant
+    description: Single-agent orchestrator that calls an openEHR MCP server tool.
+    pattern: sequential
+    checkpointing:
+      enabled: false
+    agents:
+      - name: openehr-agent
+        agentType: chat
+        provider: azure-openai-main
+        model: "gpt-4o"
+        instructions: "You help clinicians query openEHR data via the configured tool."
+        tools:
+          - type: mcp
+            name: query-patient-summary
+            endpoint: "https://<your-mcp-server>/mcp"
+            authType: bearer
+            tokenEndpoint: "https://<your-identity-provider>/oauth2/token"
+            clientId: "<REPLACE_WITH_REAL_CLIENT_ID>"
+            clientSecret: "<REPLACE_WITH_REAL_CLIENT_SECRET>"
+            scope: "openehr.read"
