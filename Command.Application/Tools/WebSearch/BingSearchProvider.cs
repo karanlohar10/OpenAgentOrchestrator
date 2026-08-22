@@ -20,7 +20,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
         }
 
         public async Task<IReadOnlyList<WebSearchResult>> SearchAsync(
-            WebSearchToolDefinition definition, string query, CancellationToken cancellationToken)
+            ToolDefinition definition, string query, CancellationToken cancellationToken)
         {
             using var client = _httpClientFactory.CreateClient("WebSearchTool");
 

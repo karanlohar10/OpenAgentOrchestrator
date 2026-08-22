@@ -72,7 +72,6 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
                     var scope = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}'";
 
                     MergeToolSecrets(previousAgent, agent, scope, errors);
-                    MergeWebSearchToolSecret(previousAgent, agent, scope, errors);
                 }
             }
         }
@@ -98,6 +97,14 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
                         errors.Add($"{toolScope}: clientSecret still contains the redacted placeholder - please enter a real value.");
                 }
 
+                if (IsUnresolvedSecret(toolItem.ApiKey))
+                {
+                    if (previousTool is not null)
+                        toolItem.ApiKey = previousTool.ApiKey;
+                    else if (!string.IsNullOrWhiteSpace(toolItem.ApiKey))
+                        errors.Add($"{toolScope}: apiKey still contains the redacted placeholder - please enter a real value.");
+                }
+
                 if (toolItem.Headers is not { Count: > 0 })
                     continue;
 
@@ -113,17 +120,6 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
                         errors.Add($"{toolScope}: header '{headerName}' still contains the redacted placeholder - please enter a real value.");
                 }
             }
-        }
-
-        private static void MergeWebSearchToolSecret(AgentDefinition? previousAgent, AgentDefinition agent, string scope, List<string> errors)
-        {
-            if (agent.WebSearchTool is null || !IsUnresolvedSecret(agent.WebSearchTool.ApiKey))
-                return;
-
-            if (previousAgent?.WebSearchTool is not null)
-                agent.WebSearchTool.ApiKey = previousAgent.WebSearchTool.ApiKey;
-            else if (!string.IsNullOrWhiteSpace(agent.WebSearchTool.ApiKey))
-                errors.Add($"{scope}, webSearchTool: apiKey still contains the redacted placeholder - please enter a real value.");
         }
 
         private static bool IsUnresolvedSecret(string? value) =>

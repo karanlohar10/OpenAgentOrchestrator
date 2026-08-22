@@ -20,7 +20,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
         {
             // Arrange
             var sut = new WebSearchToolFactory([new TavilySearchProvider(_httpClientFactoryMock.Object)]);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "unknown-provider", ApiKey = "key" };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "unknown-provider", ApiKey = "key" };
 
             // Act & Assert
             var exception = Assert.ThrowsExactly<InvalidOperationException>(() => sut.Create(definition));
@@ -32,7 +32,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
         {
             // Arrange
             var sut = new WebSearchToolFactory([new TavilySearchProvider(_httpClientFactoryMock.Object)]);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "key" };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "key" };
 
             // Act
             var tool = sut.Create(definition);
@@ -58,7 +58,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
             SetupHttpClientFactory(handler);
 
             var provider = new TavilySearchProvider(_httpClientFactoryMock.Object);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "tavily-key", MaxResults = 5 };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "tavily-key", MaxResults = 5 };
 
             // Act
             var results = await provider.SearchAsync(definition, "test query", default);
@@ -78,7 +78,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
             SetupHttpClientFactory(handler);
 
             var provider = new TavilySearchProvider(_httpClientFactoryMock.Object);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "bad-key" };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "bad-key" };
 
             // Act & Assert
             await Assert.ThrowsExactlyAsync<InvalidOperationException>(
@@ -103,7 +103,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
             SetupHttpClientFactory(handler);
 
             var provider = new BingSearchProvider(_httpClientFactoryMock.Object);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "bing", ApiKey = "bing-key" };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "bing", ApiKey = "bing-key" };
 
             // Act
             var results = await provider.SearchAsync(definition, "test query", default);
@@ -130,7 +130,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
             SetupHttpClientFactory(handler);
 
             var provider = new GoogleSearchProvider(_httpClientFactoryMock.Object);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "google", ApiKey = "google-key", SearchEngineId = "cx-id" };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "google", ApiKey = "google-key", SearchEngineId = "cx-id" };
 
             // Act
             var results = await provider.SearchAsync(definition, "test query", default);
@@ -157,7 +157,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Tools.WebSearch
             SetupHttpClientFactory(handler);
 
             var provider = new SerpApiSearchProvider(_httpClientFactoryMock.Object);
-            var definition = new WebSearchToolDefinition { Enabled = true, Provider = "serpapi", ApiKey = "serpapi-key" };
+            var definition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "serpapi", ApiKey = "serpapi-key" };
 
             // Act
             var results = await provider.SearchAsync(definition, "test query", default);

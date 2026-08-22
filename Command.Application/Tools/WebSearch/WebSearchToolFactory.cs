@@ -8,18 +8,19 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
     {
         /// <summary>
         /// Builds a <c>web_search</c> <see cref="AITool"/> backed by the provider selected in
-        /// <paramref name="definition"/>. Throws if <see cref="WebSearchToolDefinition.Provider"/>
-        /// doesn't match a known provider (should already have been caught by config validation
-        /// at startup, but this is the last line of defense at agent-creation time).
+        /// <paramref name="definition"/> (a "web-search"-typed <see cref="ToolDefinition"/>).
+        /// Throws if <see cref="ToolDefinition.Provider"/> doesn't match a known provider (should
+        /// already have been caught by config validation at startup, but this is the last line of
+        /// defense at agent-creation time).
         /// </summary>
-        AITool Create(WebSearchToolDefinition definition);
+        AITool Create(ToolDefinition definition);
     }
 
     /// <summary>
-    /// Builds a custom, provider-agnostic web-search <see cref="AITool"/> from
-    /// <see cref="WebSearchToolDefinition"/>, dispatching the actual REST call to one of several
+    /// Builds a custom, provider-agnostic web-search <see cref="AITool"/> from a "web-search"-typed
+    /// <see cref="ToolDefinition"/>, dispatching the actual REST call to one of several
     /// <see cref="IWebSearchProvider"/> implementations selected by
-    /// <see cref="WebSearchToolDefinition.Provider"/>. Distinct from - and independent of - any
+    /// <see cref="ToolDefinition.Provider"/>. Distinct from - and independent of - any
     /// model-provider-hosted web search a Harness agent may attach automatically; see
     /// <see cref="HarnessOptionsDefinition.DisableWebSearch"/>.
     /// </summary>
@@ -32,7 +33,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
             _providers = providers.ToDictionary(p => p.ProviderName, StringComparer.OrdinalIgnoreCase);
         }
 
-        public AITool Create(WebSearchToolDefinition definition)
+        public AITool Create(ToolDefinition definition)
         {
             if (!_providers.TryGetValue(definition.Provider, out var provider))
             {
@@ -49,7 +50,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
         }
 
         private static async Task<string> SearchAsync(
-            IWebSearchProvider provider, WebSearchToolDefinition definition, string query, CancellationToken cancellationToken)
+            IWebSearchProvider provider, ToolDefinition definition, string query, CancellationToken cancellationToken)
         {
             var results = await provider.SearchAsync(definition, query, cancellationToken);
             return JsonSerializer.Serialize(results);

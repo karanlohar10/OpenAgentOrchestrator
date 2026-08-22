@@ -49,19 +49,7 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             ResponseFormat = agent.ResponseFormat,
             AgentType = agent.AgentType,
             Harness = agent.Harness,
-            ShellTool = agent.ShellTool,
-            WebSearchTool = agent.WebSearchTool is null ? null : Redact(agent.WebSearchTool)
-        };
-
-        public static WebSearchToolDefinition Redact(WebSearchToolDefinition webSearchTool) => new()
-        {
-            Enabled = webSearchTool.Enabled,
-            Provider = webSearchTool.Provider,
-            ApiKey = string.IsNullOrEmpty(webSearchTool.ApiKey) ? webSearchTool.ApiKey : RedactedPlaceholder,
-            MaxResults = webSearchTool.MaxResults,
-            SearchDepth = webSearchTool.SearchDepth,
-            SearchEngineId = webSearchTool.SearchEngineId,
-            SearchEngine = webSearchTool.SearchEngine
+            Planning = agent.Planning
         };
 
         public static ToolDefinition Redact(ToolDefinition tool) => new()
@@ -74,7 +62,16 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             ClientId = tool.ClientId,
             ClientSecret = string.IsNullOrEmpty(tool.ClientSecret) ? tool.ClientSecret : RedactedPlaceholder,
             Scope = tool.Scope,
-            Headers = tool.Headers?.ToDictionary(kv => kv.Key, _ => RedactedPlaceholder)
+            Headers = tool.Headers?.ToDictionary(kv => kv.Key, _ => RedactedPlaceholder),
+            Mode = tool.Mode,
+            AcknowledgeUnsafe = tool.AcknowledgeUnsafe,
+            RequireApproval = tool.RequireApproval,
+            Provider = tool.Provider,
+            ApiKey = string.IsNullOrEmpty(tool.ApiKey) ? tool.ApiKey : RedactedPlaceholder,
+            MaxResults = tool.MaxResults,
+            SearchDepth = tool.SearchDepth,
+            SearchEngineId = tool.SearchEngineId,
+            SearchEngine = tool.SearchEngine
         };
     }
 }

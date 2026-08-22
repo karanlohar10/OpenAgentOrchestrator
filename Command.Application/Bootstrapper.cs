@@ -59,7 +59,9 @@ namespace OpenAgentOrchestrator.Command.Application
             services.TryAddSingleton<IWorkflowExecutionCoordinator, WorkflowExecutionCoordinator>();
 
             services.TryAddSingleton<ITokenService, ClientCredentialsTokenService>();
-            services.TryAddSingleton<IToolBinder, McpToolBinder>();
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolBinder, McpToolBinder>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolBinder, ShellToolBinder>());
+            services.TryAddEnumerable(ServiceDescriptor.Singleton<IToolBinder, WebSearchToolBinder>());
             services.TryAddSingleton<IToolBinderFactory, ToolBinderFactory>();
 
             services.TryAddSingleton<IChatClientFactory, ChatClientFactory>();

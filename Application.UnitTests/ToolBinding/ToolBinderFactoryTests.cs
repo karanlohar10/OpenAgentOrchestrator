@@ -23,7 +23,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.ToolBinding
             var binder = new Mock<IToolBinder>();
             binder.SetupGet(instance => instance.SupportedType).Returns("mcp");
             binder.Setup(instance => instance.BindAsync(It.IsAny<ToolDefinition>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync([tool]);
+                .ReturnsAsync(new ToolBindingResult([tool]));
 
             var sut = new ToolBinderFactory([binder.Object]);
 
@@ -34,7 +34,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.ToolBinding
             ]);
 
             // Assert
-            result.Should().ContainSingle()
+            result.Tools.Should().ContainSingle()
                 .Which.Name.Should().Be("lookup");
         }
 

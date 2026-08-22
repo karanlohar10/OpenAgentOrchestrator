@@ -17,11 +17,12 @@ namespace OpenAgentOrchestrator.Command.Application.Tools
     {
         /// <summary>
         /// Builds a local shell tool + environment-awareness context provider from
-        /// <paramref name="definition"/>. Throws if <see cref="ShellToolDefinition.AcknowledgeUnsafe"/>
-        /// is not explicitly <see langword="true"/> - shell execution is inherently unsafe (file
-        /// system, process, and credential access) and must be opted into deliberately.
+        /// <paramref name="definition"/> (a "shell"-typed <see cref="ToolDefinition"/>). Throws if
+        /// <see cref="ToolDefinition.AcknowledgeUnsafe"/> is not explicitly <see langword="true"/>
+        /// - shell execution is inherently unsafe (file system, process, and credential access)
+        /// and must be opted into deliberately.
         /// </summary>
-        ShellToolBinding Create(ShellToolDefinition definition);
+        ShellToolBinding Create(ToolDefinition definition);
     }
 
     /// <summary>
@@ -30,7 +31,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools
     /// </summary>
     public sealed class ShellToolFactory : IShellToolFactory
     {
-        public ShellToolBinding Create(ShellToolDefinition definition)
+        public ShellToolBinding Create(ToolDefinition definition)
         {
             if (!definition.AcknowledgeUnsafe)
             {

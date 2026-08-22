@@ -20,7 +20,7 @@ namespace OpenAgentOrchestrator.Command.Application.ToolBinding
 
         public string SupportedType => "mcp";
 
-        public async Task<IList<AITool>> BindAsync(ToolDefinition definition, CancellationToken cancellationToken = default)
+        public async Task<ToolBindingResult> BindAsync(ToolDefinition definition, CancellationToken cancellationToken = default)
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(definition.Endpoint);
 
@@ -38,7 +38,7 @@ namespace OpenAgentOrchestrator.Command.Application.ToolBinding
             var toolsResult = await client.ListToolsAsync(cancellationToken: cancellationToken);
             var tools = toolsResult.ToList();
             var filtered = tools.Where(t => t.Name == definition.Name).ToList();
-            return filtered.Select(t => (AITool)t).ToList();
+            return new ToolBindingResult(filtered.Select(t => (AITool)t).ToList());
         }
 
         private async Task<Dictionary<string, string>?> ResolveHeadersAsync(

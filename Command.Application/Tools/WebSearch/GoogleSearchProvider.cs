@@ -6,7 +6,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
 {
     /// <summary>
     /// Calls the Google Custom Search JSON API (https://developers.google.com/custom-search/v1/reference/rest/v1/cse/list).
-    /// Requires <see cref="WebSearchToolDefinition.SearchEngineId"/> (the "cx" Programmable
+    /// Requires <see cref="ToolDefinition.SearchEngineId"/> (the "cx" Programmable
     /// Search Engine id) in addition to the API key.
     /// </summary>
     public sealed class GoogleSearchProvider : IWebSearchProvider
@@ -22,7 +22,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
         }
 
         public async Task<IReadOnlyList<WebSearchResult>> SearchAsync(
-            WebSearchToolDefinition definition, string query, CancellationToken cancellationToken)
+            ToolDefinition definition, string query, CancellationToken cancellationToken)
         {
             using var client = _httpClientFactory.CreateClient("WebSearchTool");
 

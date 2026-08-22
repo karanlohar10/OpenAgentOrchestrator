@@ -48,9 +48,15 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
                                         ClientId = "client-id",
                                         ClientSecret = toolClientSecret,
                                         Headers = headerValue is null ? null : new Dictionary<string, string> { ["X-API-Key"] = headerValue }
+                                    },
+                                    new ToolDefinition
+                                    {
+                                        Type = "web-search",
+                                        Name = "web-search",
+                                        Provider = "tavily",
+                                        ApiKey = webSearchApiKey
                                     }
-                                ],
-                                WebSearchTool = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = webSearchApiKey }
+                                ]
                             }
                         ]
                     }
@@ -134,7 +140,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
 
             // Assert
             errors.Should().BeEmpty();
-            candidate.Orchestrators.Single().Agents.Single().Tools!.Single().ClientSecret.Should().Be("real-client-secret");
+            candidate.Orchestrators.Single().Agents.Single().Tools!.Single(t => t.Type == "mcp").ClientSecret.Should().Be("real-client-secret");
         }
 
         [TestMethod]
@@ -150,7 +156,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
 
             // Assert
             errors.Should().BeEmpty();
-            candidate.Orchestrators.Single().Agents.Single().Tools!.Single().Headers!["X-API-Key"].Should().Be("real-header-value");
+            candidate.Orchestrators.Single().Agents.Single().Tools!.Single(t => t.Type == "mcp").Headers!["X-API-Key"].Should().Be("real-header-value");
         }
 
         [TestMethod]
@@ -158,7 +164,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
         {
             // Arrange
             var previous = BuildConfig();
-            previous.Orchestrators.Single().Agents.Single().Tools!.Single().Name = "different-tool-name";
+            previous.Orchestrators.Single().Agents.Single().Tools!.Single(t => t.Type == "mcp").Name = "different-tool-name";
             var candidate = BuildConfig(toolClientSecret: ConfigRedaction.RedactedPlaceholder);
             var sut = new ConfigMerge();
 
@@ -182,7 +188,8 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Configuration
 
             // Assert
             errors.Should().BeEmpty();
-            candidate.Orchestrators.Single().Agents.Single().WebSearchTool!.ApiKey.Should().Be("real-web-search-key");
+            candidate.Orchestrators.Single().Agents.Single().Tools!
+                .Single(t => t.Type == "web-search").ApiKey.Should().Be("real-web-search-key");
         }
     }
 }

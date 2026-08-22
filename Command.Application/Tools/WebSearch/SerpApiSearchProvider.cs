@@ -6,7 +6,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
 {
     /// <summary>
     /// Calls SerpApi's search endpoint (https://serpapi.com/search-api), which proxies a chosen
-    /// underlying search engine (see <see cref="WebSearchToolDefinition.SearchEngine"/>).
+    /// underlying search engine (see <see cref="ToolDefinition.SearchEngine"/>).
     /// </summary>
     public sealed class SerpApiSearchProvider : IWebSearchProvider
     {
@@ -21,7 +21,7 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
         }
 
         public async Task<IReadOnlyList<WebSearchResult>> SearchAsync(
-            WebSearchToolDefinition definition, string query, CancellationToken cancellationToken)
+            ToolDefinition definition, string query, CancellationToken cancellationToken)
         {
             using var client = _httpClientFactory.CreateClient("WebSearchTool");
 

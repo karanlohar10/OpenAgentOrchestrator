@@ -11,14 +11,14 @@ namespace OpenAgentOrchestrator.Command.Application.Tools.WebSearch
 
     /// <summary>
     /// Calls a specific third-party web-search REST API and normalizes its response. One
-    /// implementation per <see cref="WebSearchToolDefinition.Provider"/> value.
+    /// implementation per <see cref="ToolDefinition.Provider"/> value.
     /// </summary>
     public interface IWebSearchProvider
     {
-        /// <summary>The <see cref="WebSearchToolDefinition.Provider"/> value this implementation handles.</summary>
+        /// <summary>The <see cref="ToolDefinition.Provider"/> value this implementation handles.</summary>
         string ProviderName { get; }
 
         Task<IReadOnlyList<WebSearchResult>> SearchAsync(
-            WebSearchToolDefinition definition, string query, CancellationToken cancellationToken);
+            ToolDefinition definition, string query, CancellationToken cancellationToken);
     }
 }
