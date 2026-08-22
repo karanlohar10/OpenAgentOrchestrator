@@ -22,12 +22,14 @@ orchestrator workflows.
   automatic hosted web-search tool - see [Configuring Agent Harness](#configuring-agent-harness)).
 - **[Shell Tools](https://learn.microsoft.com/agent-framework/integrations/by-component/tools/shell-tools)**
   support — any agent (harness or plain chat) can optionally be given a local shell tool
-  (`LocalShellExecutor`), configurable per-agent: `stateless` vs `persistent` mode, an explicit
-  `acknowledgeUnsafe` opt-in, and a configurable `requireApproval` flag for command execution.
+  (`LocalShellExecutor`) as a `type: shell` entry in its `tools:` list, configurable per-agent:
+  `stateless` vs `persistent` mode, an explicit `acknowledgeUnsafe` opt-in, and a configurable
+  `requireApproval` flag for command execution.
 - **Custom, multi-provider web search tool** — any agent (harness or plain chat) can optionally
-  be given a real `web_search` tool backed by Tavily, Bing, Google Custom Search, or SerpApi
-  (selected via `webSearchTool.provider`), independent of the harness's own hosted web search
-  (see [Configuring the Web Search Tool](#configuring-the-web-search-tool)).
+  be given a real `web_search` tool backed by Tavily, Bing, Google Custom Search, or SerpApi, as a
+  `type: web-search` entry in its `tools:` list (selected via its `provider` field), independent
+  of the harness's own hosted web search (see [Configuring the Web Search
+  Tool](#configuring-the-web-search-tool)).
 - **Sequential workflow pattern** with optional durable checkpointing and human-in-the-loop
   review gates between steps, with resume/redo support (see [Resuming a checkpointed
   session](#resuming-a-checkpointed-session)).
@@ -46,7 +48,8 @@ orchestrator workflows.
 - **Command.Contract** — `ExecuteRequest`/`ExecuteResponse`/`ResumeRequest`/`ValidationResult` DTOs.
 - **Command.Domain.Model** — `PlatformConfig` and the orchestrator/agent/provider/tool
   configuration model types (parsed from `config.yaml`), including `AgentType`, `HarnessOptions`,
-  `ShellToolDefinition`, and `WebSearchToolDefinition`.
+  and `ToolDefinition` (the single, polymorphic model for every tool type - `mcp`, `shell`, and
+  `web-search`).
 - **Query.Application** — thin read-side service projecting config/session/checkpoint state into
   `Query.Domain.Model` response DTOs, registered via `AddQueryApplication()`.
 - **Query.Domain.Model** — `OrchestratorSummaryResponse`, `SessionStatusResponse`,
@@ -100,38 +103,93 @@ deployments respond with `HTTP 400 (invalid_request_error: unknown_parameter)` /
   Microsoft's guidance, leaving this `false` while also adding a custom search tool gives the
   agent *two* search tools at once, which is redundant and can confuse the model.
 
-## Configuring Shell Tools
+## Configuring Planning (Todos & Agent Modes)
 
-Any agent (harness or chat) can be given a local shell tool by adding a `shellTool:` block:
+Any agent - `chat` or `harness` - can opt into the Microsoft Agent Framework's built-in
+["planning and todos"](https://learn.microsoft.com/agent-framework/agents/planning-and-todos)
+primitives via an optional `planning:` block:
 
 ```yaml
-    shellTool:
-      enabled: true            # attach a LocalShellExecutor to this agent
-      mode: persistent          # "stateless" (fresh shell per call) or "persistent" (state carries across calls)
-      acknowledgeUnsafe: true   # must be explicitly true - shell execution is inherently unsafe
-      requireApproval: true     # require caller/human approval before each shell command executes
+agents:
+  - name: research-agent
+    agentType: harness   # or "chat" - both are supported
+    planning:
+      enableTodos: true        # attaches a todo list (todos_add/complete/remove/get_* tools)
+      enableAgentMode: true     # attaches plan/execute mode switching (mode_get/mode_set tools)
+      defaultMode: plan         # optional; falls back to the framework default ("plan")
+      modes:                    # optional; overrides the framework's built-in plan/execute pair
+        - name: plan
+          instructions: "Analyze requirements, create todos, and ask clarifying questions."
+        - name: execute
+          instructions: "Work through the todo list autonomously, making reasonable choices."
+      enableTodoLoop: true      # re-invokes the agent while todos remain incomplete
+      loopModes: [execute]      # which mode(s) the loop should keep iterating in (default: [execute])
+```
+
+Omitting `planning:` entirely leaves agent behavior unchanged - this is fully opt-in.
+
+- **`enableTodos`** attaches `TodoProvider`, giving the model a trackable todo list.
+- **`enableAgentMode`** attaches `AgentModeProvider`, giving the model `plan`/`execute` (or custom,
+  via `modes:`) mode switching.
+- **`enableTodoLoop`** wraps the agent so it keeps re-invoking itself while incomplete todos
+  remain in one of `loopModes` (default: `["execute"]"`) - only meaningful when `enableTodos` is
+  also `true` (enforced by `$validate`/config load). The iteration cap is **hardcoded to 5** and
+  is intentionally not configurable.
+- For `agentType: chat`, these map to a manually-constructed `TodoProvider`/`AgentModeProvider`
+  added to `AIContextProviders`, with the finished agent wrapped in a `LoopAgent` +
+  `TodoCompletionLoopEvaluator` when `enableTodoLoop` is set.
+- For `agentType: harness`, these map directly onto `HarnessAgentOptions`
+  (`DisableTodoProvider`/`DisableAgentModeProvider`/`AgentModeProviderOptions`/`LoopEvaluators`/
+  `LoopAgentOptions`) since the harness already owns an equivalent provider/loop pipeline
+  internally - no external wrapping is applied to harness agents.
+
+See `Command.Application/Agents/AgentFactory.cs` (`CreateChatAgentWithPlanning`/
+`CreateHarnessAgent`) and `Command.Domain.Model/Configuration/PlanningDefinition.cs`.
+
+## Configuring Tools
+
+Every tool an agent can call - whether a remote Model Context Protocol tool, the local shell
+tool, or the custom web-search tool - is a single entry in that agent's `tools:` list,
+distinguished by `type`: `mcp`, `shell`, or `web-search`. Every entry requires a `name` (for `mcp`
+it must match the remote tool name; for `shell`/`web-search` it's just a label used for logging
+and for matching entries across config reloads).
+
+## Configuring Shell Tools
+
+Any agent (harness or chat) can be given a local shell tool by adding a `type: shell` entry to
+its `tools:` list:
+
+```yaml
+    tools:
+      - type: shell
+        name: local-shell
+        mode: persistent          # "stateless" (fresh shell per call) or "persistent" (state carries across calls)
+        acknowledgeUnsafe: true   # must be explicitly true - shell execution is inherently unsafe
+        requireApproval: true     # require caller/human approval before each shell command executes
 ```
 
 This wires up `LocalShellExecutor`/`ShellEnvironmentProvider` (`Microsoft.Agents.AI.Tools.Shell`)
 and attaches `.AsAIFunction(requireApproval: ...)` to the agent's tool list, with the executor's
-lifetime scoped to the agent. See `Command.Application/Tools/ShellToolFactory.cs`.
+lifetime scoped to the agent. See `Command.Application/Tools/ShellToolFactory.cs` and
+`Command.Application/ToolBinding/ShellToolBinder.cs`.
 
 ## Configuring the Web Search Tool
 
 Any agent (harness or chat) can be given a real, working `web_search` tool by adding a
-`webSearchTool:` block. Unlike the harness's own hosted web search (see
+`type: web-search` entry to its `tools:` list. Unlike the harness's own hosted web search (see
 [`disableWebSearch`](#configuring-agent-harness)), this tool calls a genuine third-party search
 REST API of your choosing and works with any `IChatClient` provider:
 
 ```yaml
-    webSearchTool:
-      enabled: true
-      provider: tavily           # "tavily" (default) | "bing" | "google" | "serpapi"
-      apiKey: "<REAL_PROVIDER_API_KEY>"
-      maxResults: 5
-      searchDepth: basic         # Tavily-only: "basic" | "advanced" | "fast" | "ultra-fast"
-      # searchEngineId: "<CX_ID>"  # required when provider: google
-      # searchEngine: google       # SerpApi-only: which engine SerpApi should proxy
+    tools:
+      - type: web-search
+        name: web-search
+        provider: tavily           # "tavily" (default) | "bing" | "google" | "serpapi"
+        apiKey: "<REAL_PROVIDER_API_KEY>"
+        maxResults: 5
+        searchDepth: basic         # Tavily-only: "basic" | "advanced" | "fast" | "ultra-fast"
+        # searchEngineId: "<CX_ID>"  # required when provider: google
+        # searchEngine: google       # SerpApi-only: which engine SerpApi should proxy
 ```
 
 Supported providers (selected via `provider`, case-insensitive):
@@ -146,18 +204,19 @@ Supported providers (selected via `provider`, case-insensitive):
 This wires up an `AIFunction` named `web_search` (via `AIFunctionFactory.Create`) that calls the
 selected provider's REST API through `IHttpClientFactory` and returns normalized
 title/url/snippet results to the model. See
-`Command.Application/Tools/WebSearch/WebSearchToolFactory.cs` and the per-provider
-`IWebSearchProvider` implementations alongside it.
+`Command.Application/Tools/WebSearch/WebSearchToolFactory.cs`,
+`Command.Application/ToolBinding/WebSearchToolBinder.cs`, and the per-provider
+`IWebSearchProvider` implementations alongside them.
 
 **Interaction with `harness.disableWebSearch`** (harness agents only): these two settings are
 independent, so choose the combination that fits your scenario:
 
-| `harness.disableWebSearch` | `webSearchTool.enabled` | Result                                              |
-|----------------------------|--------------------------|------------------------------------------------------|
-| `false` (default)          | `false` (default)        | Only the hosted tool (if the provider supports it). |
-| `true`                     | `true`                    | **Recommended when adding a custom tool** — only the custom tool, avoiding the redundant/confusing "two search tools" case. |
-| `false`                    | `true`                    | Both tools attached at once — redundant, not recommended. |
-| `true`                     | `false`                   | No web search at all. |
+| `harness.disableWebSearch` | `tools:` has a `web-search` entry | Result                                              |
+|----------------------------|-------------------------------------|------------------------------------------------------|
+| `false` (default)          | no                                   | Only the hosted tool (if the provider supports it). |
+| `true`                     | yes                                  | **Recommended when adding a custom tool** — only the custom tool, avoiding the redundant/confusing "two search tools" case. |
+| `false`                    | yes                                  | Both tools attached at once — redundant, not recommended. |
+| `true`                     | no                                   | No web search at all. |
 
 ## Instructions & Response Schema Files
 
@@ -215,12 +274,12 @@ Because query endpoints always redact secret fields (`***redacted***`) before re
 tool that round-trips a `GET` response back through `PUT`/`$validate` would otherwise overwrite
 every real secret with that placeholder. To prevent that, both endpoints run a **secret-sentinel
 merge** first: any secret field (`provider.apiKey`, `tool.clientSecret`, `tool.headers` values,
-`webSearchTool.apiKey`) that arrives blank or still equal to `***redacted***` is replaced with the
-existing real value from the currently-loaded config, matched by provider id / orchestrator id +
-agent name + tool name (or header key). Only fields the caller actually retyped with a real value
-are overwritten. A **new** provider/tool/agent (one with no match in the current config) has
-nothing to fall back to — leaving its secret blank/redacted is reported as a validation error
-instead of silently accepting a placeholder.
+`tool.apiKey` on a `web-search`-typed tool) that arrives blank or still equal to `***redacted***`
+is replaced with the existing real value from the currently-loaded config, matched by provider id
+/ orchestrator id + agent name + tool name (or header key). Only fields the caller actually
+retyped with a real value are overwritten. A **new** provider/tool/agent (one with no match in the
+current config) has nothing to fall back to — leaving its secret blank/redacted is reported as a
+validation error instead of silently accepting a placeholder.
 
 `PUT` writes to disk and reloads the in-memory config only if the merged candidate passes
 validation; `$validate` runs the identical pipeline but never writes or swaps the active config,
@@ -251,17 +310,68 @@ throws, or the process is killed mid-run, `POST .../$resume` with
 `{ "action": "redoFromStep", "stepIndex": <Steps.Count> }` picks up from the last successfully
 completed step.
 
+### Configuring human-in-the-loop clarification
+
+By default, `humanInLoop` pauses after **every** step for a generic review/approval — there is no
+built-in way to tell whether a paused step is a routine result or a genuine question the agent
+needs answered before it can continue. Setting `checkpointing.humanInLoop.enableClarificationFlag:
+true` (requires `humanInLoop.enabled: true`) adds that distinction, purely as extra metadata on the
+existing pause — every step still pauses unconditionally either way; nothing about *when* a run
+pauses changes.
+
+When enabled, every agent in that orchestrator is instructed to reply with a fixed JSON envelope
+instead of free text:
+
+```json
+{ "needsClarification": true, "clarificationQuestion": "Which patient ID should I use?", "content": "" }
+```
+
+or, for a routine (non-question) result:
+
+```json
+{ "needsClarification": false, "clarificationQuestion": null, "content": "<the agent's real output>" }
+```
+
+- `GET /query/api/v{version}/sessions/{sessionId}` (and `GET .../checkpoints`) surface
+  `pendingNeedsClarification`/`pendingClarificationQuestion` alongside the existing
+  `pendingOutput`/`pendingApprovalPrompt` fields while `status` is `pending_approval` — use
+  `pendingNeedsClarification` to decide whether to render a question prompt (show
+  `pendingClarificationQuestion`) or the usual generic review prompt.
+- **Answering is unchanged** — still `POST .../$resume` with
+  `{ "action": "continue", "value": "<the answer>" }`. No new endpoint. If the pending step needed
+  clarification, the answer is sent back to the **same agent** as its next turn (so it can ask a
+  follow-up question, pausing again, or produce its real output); otherwise the answer is forwarded
+  to the next agent exactly as it is today.
+- **The agent genuinely remembers asking the question** across that pause/`$resume` round-trip
+  (even across a process restart) — not because we resend the full conversation ourselves, but
+  because MAF wraps every workflow agent node in its own stateful executor with a per-node
+  conversation session that is itself part of the same durable checkpoint the pause/resume flow
+  already relies on. Only the human's new answer is sent on loop-back; the agent's own prior turn
+  (its question) is already retained internally.
+- **Caveat**: if an agent already has its own custom `responseFormat` (a structured-output schema),
+  the two are not composed automatically — embed that structured output (as a string) inside the
+  envelope's `"content"` field yourself via the agent's instructions.
+- **Fail-safe**: if an agent's response doesn't parse as the envelope (e.g. a model ignored the
+  instructions), the raw text is used as-is and treated as a non-clarification result — the step
+  still pauses for review, it just won't offer the clarification-specific metadata for that round.
+- **Known limitation**: `redoFromStep` targets a step by its static position in the pipeline. A
+  step that went through multiple clarification rounds (several question/answer exchanges with the
+  same agent) still appends one durable step record per round, so its full history remains visible
+  — but rewinding into the *middle* of such a multi-round exchange via `redoFromStep` is not
+  supported in this release. Plain pause → answer → continue, and plain crash-recovery resume, are
+  unaffected.
+
 ## Security Notes
 
 - `Service/config.yaml` holds real secrets and is `.gitignore`d — only `config.sample.yaml`
   (placeholders only) is committed. **Never commit `config.yaml`.**
 - Query endpoints that return provider/orchestrator/tool definitions redact `apiKey`,
   `clientSecret`, and header values via `ConfigRedaction` before serializing the response.
-- Shell tools are disabled by default (`shellTool.enabled: false`) and require an explicit
-  `acknowledgeUnsafe: true` to turn on, since local shell execution is inherently unsafe.
-- Web-search tool API keys (`webSearchTool.apiKey`) are stored directly in `config.yaml`, like
-  other secrets in this project, and are redacted by `ConfigRedaction` before being returned over
-  query endpoints.
+- Shell tools require an explicit `acknowledgeUnsafe: true` on their `type: shell` tool entry to
+  be attached at all, since local shell execution is inherently unsafe.
+- Web-search tool API keys (a `type: web-search` tool entry's `apiKey`) are stored directly in
+  `config.yaml`, like other secrets in this project, and are redacted by `ConfigRedaction` before
+  being returned over query endpoints.
 - There is no authentication/authorization wired up by default (this is a hackathon fork with
   Spine platform auth removed) — do not expose this service on a public network as-is.
 

@@ -51,6 +51,16 @@ namespace OpenAgentOrchestrator.Command.Application.Checkpointing
         public string? PendingApprovalPrompt { get; set; }
 
         /// <summary>
+        /// <see langword="true"/> when the pending step's output was parsed as a clarification
+        /// envelope with <c>needsClarification: true</c> - see
+        /// <see cref="Application.Sessions.OrchestratorSession.PendingNeedsClarification"/>.
+        /// </summary>
+        public bool PendingNeedsClarification { get; set; }
+
+        /// <summary>The clarifying question the agent asked, when <see cref="PendingNeedsClarification"/> is true.</summary>
+        public string? PendingClarificationQuestion { get; set; }
+
+        /// <summary>
         /// Store-specific optimistic-concurrency stamp, populated by
         /// <see cref="IWorkflowCheckpointStore.LoadAsync"/> implementations that support
         /// concurrency detection (e.g. the Postgres-backed store) and consumed by their

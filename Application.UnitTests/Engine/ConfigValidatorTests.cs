@@ -211,6 +211,39 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         }
 
         [TestMethod]
+        public void Validate_EnableClarificationFlagWithHumanInLoopDisabled_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Checkpointing = new CheckpointingDefinition
+            {
+                Enabled = true,
+                HumanInLoop = new HumanInLoopDefinition { Enabled = false, EnableClarificationFlag = true }
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("Orchestrator 'test-orch'") && e.Contains("enableClarificationFlag is set but humanInLoop.enabled is not")));
+        }
+
+        [TestMethod]
+        public void Validate_EnableClarificationFlagWithHumanInLoopEnabled_ReturnsValid()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Checkpointing = new CheckpointingDefinition
+            {
+                Enabled = true,
+                HumanInLoop = new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true }
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsTrue(result.IsValid);
+        }
+
+        [TestMethod]
         public void Validate_AgentMissingProviderAndModel_WithNoDefaultsConfigured_ReturnsErrors()
         {
             var config = CreateValidConfig();
@@ -242,12 +275,10 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         public void Validate_WebSearchToolWithValidTavilyConfig_ReturnsValid()
         {
             var config = CreateValidConfig();
-            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
-            {
-                Enabled = true,
-                Provider = "tavily",
-                ApiKey = "test-key"
-            };
+            config.Orchestrators[0].Agents[0].Tools =
+            [
+                new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "test-key" }
+            ];
 
             var validator = new ConfigValidator();
             var result = validator.Validate(config);
@@ -259,12 +290,10 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         public void Validate_WebSearchToolWithInvalidProvider_ReturnsError()
         {
             var config = CreateValidConfig();
-            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
-            {
-                Enabled = true,
-                Provider = "not-a-real-provider",
-                ApiKey = "test-key"
-            };
+            config.Orchestrators[0].Agents[0].Tools =
+            [
+                new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "not-a-real-provider", ApiKey = "test-key" }
+            ];
 
             var validator = new ConfigValidator();
             var result = validator.Validate(config);
@@ -277,12 +306,10 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         public void Validate_WebSearchToolWithoutApiKey_ReturnsError()
         {
             var config = CreateValidConfig();
-            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
-            {
-                Enabled = true,
-                Provider = "tavily",
-                ApiKey = ""
-            };
+            config.Orchestrators[0].Agents[0].Tools =
+            [
+                new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "" }
+            ];
 
             var validator = new ConfigValidator();
             var result = validator.Validate(config);
@@ -295,12 +322,10 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         public void Validate_WebSearchToolWithGoogleProviderMissingSearchEngineId_ReturnsError()
         {
             var config = CreateValidConfig();
-            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
-            {
-                Enabled = true,
-                Provider = "google",
-                ApiKey = "test-key"
-            };
+            config.Orchestrators[0].Agents[0].Tools =
+            [
+                new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "google", ApiKey = "test-key" }
+            ];
 
             var validator = new ConfigValidator();
             var result = validator.Validate(config);
@@ -310,15 +335,69 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         }
 
         [TestMethod]
-        public void Validate_WebSearchToolDisabled_SkipsValidation()
+        public void Validate_AgentWithoutWebSearchTool_SkipsValidation()
         {
             var config = CreateValidConfig();
-            config.Orchestrators[0].Agents[0].WebSearchTool = new WebSearchToolDefinition
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsTrue(result.IsValid);
+        }
+
+        [TestMethod]
+        public void Validate_PlanningEnableTodoLoopWithoutEnableTodos_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].Planning = new PlanningDefinition
             {
-                Enabled = false,
-                Provider = "not-a-real-provider",
-                ApiKey = ""
+                EnableTodoLoop = true
             };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("enableTodoLoop requires enableTodos")));
+        }
+
+        [TestMethod]
+        public void Validate_PlanningEnableTodoLoopWithEnableTodos_IsValid()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].Planning = new PlanningDefinition
+            {
+                EnableTodos = true,
+                EnableTodoLoop = true
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsTrue(result.IsValid);
+        }
+
+        [TestMethod]
+        public void Validate_PlanningModeWithBlankInstructions_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Agents[0].Planning = new PlanningDefinition
+            {
+                EnableAgentMode = true,
+                Modes = [new AgentModeDefinition { Name = "plan", Instructions = "  " }]
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("blank instructions")));
+        }
+
+        [TestMethod]
+        public void Validate_AgentWithoutPlanning_SkipsValidation()
+        {
+            var config = CreateValidConfig();
 
             var validator = new ConfigValidator();
             var result = validator.Validate(config);

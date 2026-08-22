@@ -23,13 +23,23 @@ orchestrators:
   - id: research-writer
     name: Research & Writer
     description: >-
-      Sample sequential orchestrator: a Harness research agent (with shell tool access) hands
-      its findings to a plain chat agent that writes the final summary.
+      Sample sequential orchestrator: a Harness research agent (with a custom web-search tool,
+      an MCP tool, and an optional local shell tool) hands its findings to a plain chat agent
+      that writes the final summary.
     pattern: sequential
     checkpointing:
       enabled: true
       humanInLoop:
         enabled: false
+        # Opt-in: when true (and enabled: true), agents in this orchestrator are instructed to
+        # respond with a structured JSON envelope ({"needsClarification": bool,
+        # "clarificationQuestion": string?, "content": string}) so a paused step can say *why* it
+        # paused - a genuine question needing a human answer, vs. a routine result awaiting review.
+        # Every step still pauses for review either way (this only adds metadata to the pause);
+        # answer either kind of pause the same way, via $resume - a "needsClarification: true"
+        # answer loops back to the SAME agent for another turn, everything else forwards to the
+        # next agent as usual. See README "Configuring human-in-the-loop clarification" for details.
+        enableClarificationFlag: false
     agents:
       # Agent Harness agent (see https://learn.microsoft.com/agent-framework/concepts/harness),
       # with a local shell tool attached (see
@@ -49,34 +59,60 @@ orchestrators:
           # IChatClient providers/deployments reject its request parameters outright (for
           # example, certain Azure OpenAI deployments respond with
           # "HTTP 400 unknown_parameter: web_search_options"). Set true whenever you attach your
-          # own webSearchTool below - per Microsoft's guidance, leaving this false while also
-          # adding a custom search tool gives the agent two search tools at once, which is
+          # own "web-search"-typed tool below - per Microsoft's guidance, leaving this false while
+          # also adding a custom search tool gives the agent two search tools at once, which is
           # redundant and can confuse the model. Only leave this false (the framework default) if
           # you want the hosted tool and your provider supports it; only set true without adding
-          # a webSearchTool if you want no web search at all.
+          # a web-search tool if you want no web search at all.
           # See https://learn.microsoft.com/agent-framework/concepts/harness.
           disableWebSearch: true
-        shellTool:
-          enabled: false          # set true to attach a local shell tool to this agent
-          mode: stateless          # "stateless" (fresh shell per call) or "persistent" (reused)
-          acknowledgeUnsafe: false # must be explicitly true to enable - shell execution is unsafe
-          requireApproval: true    # require human/caller approval before each shell command runs
-        # Custom web-search tool - a real, working replacement for the disabled hosted tool
-        # above. "provider" selects which search REST API to call; each provider has its own
-        # required fields (see the per-provider comments). The apiKey is stored directly in
-        # config.yaml, consistent with this project's "secrets live in config.yaml" convention.
-        webSearchTool:
-          enabled: true
-          provider: tavily          # "tavily" (default) | "bing" | "google" | "serpapi"
-          apiKey: "<REPLACE_WITH_REAL_TAVILY_API_KEY>"
-          maxResults: 5
-          searchDepth: basic         # Tavily-only: "basic" | "advanced" | "fast" | "ultra-fast"
-          # searchEngineId: "<GOOGLE_CUSTOM_SEARCH_ENGINE_CX_ID>"  # required when provider: google
-          # searchEngine: google     # SerpApi-only: which engine SerpApi should proxy (default "google")
-        # MCP tool secured with a static API key sent as a request header. authType "apiKey" is
-        # the default (shown here explicitly for clarity) - headers are literal name/value pairs
-        # stored directly in config.yaml, which is gitignored and must never be committed.
+        # Opt-in "planning and todos" support (see
+        # https://learn.microsoft.com/agent-framework/agents/planning-and-todos). Entirely
+        # optional - omit "planning:" for unchanged behavior. Works for both agentType: harness
+        # (shown here - the harness owns its own todo/agent-mode/loop pipeline natively) and
+        # agentType: chat (where the equivalent providers/loop are attached externally).
+        planning:
+          enableTodos: true        # attaches a todo list (todos_add/complete/remove/get_* tools)
+          enableAgentMode: true    # attaches plan/execute mode switching (mode_get/mode_set tools)
+          defaultMode: plan        # starting mode; omit to use the framework default ("plan")
+          # enableTodoLoop re-invokes the agent (a hardcoded, non-configurable max of 5 times)
+          # while incomplete todos remain in one of loopModes - only meaningful with
+          # enableTodos: true. Left off here since research-agent runs a single pass per step;
+          # uncomment for agents that should autonomously work through their own todo list.
+          # enableTodoLoop: true
+          # loopModes: [execute]
+        # Every tool an agent uses - MCP, local shell, or custom web-search - is a single entry
+        # here, distinguished by "type". "name" is required on every entry: for "mcp" tools it
+        # must match the remote tool name exposed by the MCP server; for "shell"/"web-search"
+        # tools it's just a label (used for logging and for matching entries across config
+        # reloads when merging back a real secret value over a redacted placeholder).
         tools:
+          # Local shell tool (see
+          # https://learn.microsoft.com/agent-framework/integrations/by-component/tools/shell-tools).
+          # Commented out by default: shell execution is unsafe (file system, process, and
+          # credential access) and unlike the other tool types, simply listing a "shell" entry
+          # here is enough to attach it - there is no separate "enabled" flag. Uncomment and set
+          # acknowledgeUnsafe: true to opt in.
+          # - type: shell
+          #   name: local-shell
+          #   mode: stateless          # "stateless" (fresh shell per call) or "persistent" (reused)
+          #   acknowledgeUnsafe: true  # must be explicitly true - shell execution is unsafe
+          #   requireApproval: true    # require human/caller approval before each shell command runs
+          # Custom web-search tool - a real, working replacement for the disabled hosted tool
+          # above. "provider" selects which search REST API to call; each provider has its own
+          # required fields (see the per-provider comments). The apiKey is stored directly in
+          # config.yaml, consistent with this project's "secrets live in config.yaml" convention.
+          - type: web-search
+            name: web-search
+            provider: tavily          # "tavily" (default) | "bing" | "google" | "serpapi"
+            apiKey: "<REPLACE_WITH_REAL_TAVILY_API_KEY>"
+            maxResults: 5
+            searchDepth: basic         # Tavily-only: "basic" | "advanced" | "fast" | "ultra-fast"
+            # searchEngineId: "<GOOGLE_CUSTOM_SEARCH_ENGINE_CX_ID>"  # required when provider: google
+            # searchEngine: google     # SerpApi-only: which engine SerpApi should proxy (default "google")
+          # MCP tool secured with a static API key sent as a request header. authType "apiKey" is
+          # the default (shown here explicitly for clarity) - headers are literal name/value pairs
+          # stored directly in config.yaml, which is gitignored and must never be committed.
           - type: mcp
             name: search-academic-sources
             endpoint: "https://<your-mcp-server>/mcp"

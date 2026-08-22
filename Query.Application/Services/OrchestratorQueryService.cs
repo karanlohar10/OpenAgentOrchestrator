@@ -75,7 +75,9 @@ namespace OpenAgentOrchestrator.Query.Application.Services
                 PendingApprovalPrompt = session.PendingApprovalPrompt,
                 PendingStepIndex = session.PendingStepIndex,
                 PendingAgentName = session.PendingAgentName,
-                PendingOutput = session.PendingOutput
+                PendingOutput = session.PendingOutput,
+                PendingNeedsClarification = session.PendingNeedsClarification,
+                PendingClarificationQuestion = session.PendingClarificationQuestion
             };
         }
 
@@ -117,7 +119,9 @@ namespace OpenAgentOrchestrator.Query.Application.Services
                 PendingAgentName = document.PendingAgentName,
                 PendingStepIndex = document.PendingStepIndex,
                 PendingOutput = document.PendingOutput,
-                PendingApprovalPrompt = document.PendingApprovalPrompt
+                PendingApprovalPrompt = document.PendingApprovalPrompt,
+                PendingNeedsClarification = document.PendingNeedsClarification,
+                PendingClarificationQuestion = document.PendingClarificationQuestion
             };
         }
     }

@@ -96,7 +96,9 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
                         SessionId = session.SessionId,
                         Status = StatusPendingApproval,
                         Output = session.PendingOutput,
-                        Steps = session.Steps.ToList()
+                        Steps = session.Steps.ToList(),
+                        PendingNeedsClarification = session.PendingNeedsClarification,
+                        PendingClarificationQuestion = session.PendingClarificationQuestion
                     };
                 }
 
@@ -150,9 +152,9 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             OrchestratorDefinition orchestrator, string input, OrchestratorSession session, CheckpointContext checkpointCtx, CancellationToken ct)
         {
             var agentDefs = orchestrator.Agents;
-            var agents = await CreateAgentsAsync(agentDefs, ct);
-
             var humanInLoop = ResolveCheckpointing(orchestrator)?.HumanInLoop;
+            var agents = await CreateAgentsAsync(agentDefs, ct, humanInLoop?.EnableClarificationFlag ?? false);
+
             var (workflow, reviewPortMeta) = BuildSequentialWorkflow(humanInLoop, agents, agentDefs);
 
             var runResult = await RunAgentWorkflowAsync(
@@ -166,12 +168,13 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             return new PatternExecutionResult(runResult.FinalOutput, runResult.Paused);
         }
 
-        private async Task<List<AIAgent>> CreateAgentsAsync(List<AgentDefinition> agentDefs, CancellationToken ct)
+        private async Task<List<AIAgent>> CreateAgentsAsync(
+            List<AgentDefinition> agentDefs, CancellationToken ct, bool requireClarificationEnvelope = false)
         {
             var agents = new List<AIAgent>(agentDefs.Count);
             foreach (var agentDef in agentDefs)
             {
-                agents.Add(await _agentFactory.CreateAgentAsync(agentDef, ct));
+                agents.Add(await _agentFactory.CreateAgentAsync(agentDef, requireClarificationEnvelope, ct));
             }
 
             return agents;
@@ -284,6 +287,8 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             session.PendingAgentName = result.PendingAgentName;
             session.PendingOutput = result.PendingOutput;
             session.PendingApprovalPrompt = approvalPrompt ?? "Please review the step output.";
+            session.PendingNeedsClarification = result.PendingNeedsClarification;
+            session.PendingClarificationQuestion = result.PendingClarificationQuestion;
 
             if (!checkpointCtx.Enabled) return;
 
@@ -294,6 +299,8 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             document.PendingAgentName = result.PendingAgentName;
             document.PendingOutput = result.PendingOutput;
             document.PendingApprovalPrompt = session.PendingApprovalPrompt;
+            document.PendingNeedsClarification = result.PendingNeedsClarification;
+            document.PendingClarificationQuestion = result.PendingClarificationQuestion;
         }
 
         /// <summary>
@@ -324,7 +331,9 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             int? PendingStepIndex = null,
             string? PendingAgentName = null,
             string? PendingOutput = null,
-            ExternalRequest? PendingRequest = null);
+            ExternalRequest? PendingRequest = null,
+            bool PendingNeedsClarification = false,
+            string? PendingClarificationQuestion = null);
 
         /// <summary>Groups the invariant inputs to <see cref="ConsumeRunAsync"/> so the method itself stays within the parameter-count limit.</summary>
         private sealed record ConsumeRunSpec(
@@ -547,7 +556,9 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
                 PendingStepIndex: meta.StepIndex,
                 PendingAgentName: meta.AgentName,
                 PendingOutput: reviewRequest?.Output ?? string.Empty,
-                PendingRequest: requestEvent.Request);
+                PendingRequest: requestEvent.Request,
+                PendingNeedsClarification: reviewRequest?.NeedsClarification ?? false,
+                PendingClarificationQuestion: reviewRequest?.ClarificationQuestion);
         }
 
         /// <summary>
@@ -562,7 +573,7 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             HumanInLoopDefinition? humanInLoop, List<AIAgent> agents, List<AgentDefinition> agentDefs)
         {
             if (humanInLoop?.Enabled == true)
-                return BuildReviewableSequentialWorkflow(humanInLoop.ApprovalPrompt, agents, agentDefs);
+                return BuildReviewableSequentialWorkflow(humanInLoop, agents, agentDefs);
 
             // WithChainOnlyAgentResponses(true) => each agent receives only the previous agent's
             // output (not the full accumulated conversation).
@@ -575,35 +586,42 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
         /// <summary>
         /// Builds a manual MAF <see cref="Workflow"/> graph equivalent to
         /// <see cref="SequentialWorkflowBuilder"/> but with a per-step, MAF-native
-        /// human-in-the-loop request/response gate (<see cref="StepReviewGateExecutor"/> -&gt;
-        /// RequestPort -&gt; <see cref="StepReviewCompleteExecutor"/>) inserted after every agent.
-        /// Each step gets its own dedicated port (rather than one shared port) so MAF's per-node
-        /// edge routing cannot fan a response out to more than one step's completion executor.
+        /// human-in-the-loop request/response gate (<see cref="StepReviewExecutor"/> -&gt;
+        /// RequestPort -&gt; back to the same <see cref="StepReviewExecutor"/>) inserted after
+        /// every agent. Each step gets its own dedicated port (rather than one shared port) so
+        /// MAF's per-node edge routing cannot fan a response out to more than one step's review
+        /// executor.
         /// </summary>
         private static (Workflow Workflow, Dictionary<string, (int StepIndex, string AgentName)> PortMeta) BuildReviewableSequentialWorkflow(
-            string? approvalPrompt, List<AIAgent> agents, List<AgentDefinition> agentDefs)
+            HumanInLoopDefinition humanInLoop, List<AIAgent> agents, List<AgentDefinition> agentDefs)
         {
             var portMeta = new Dictionary<string, (int StepIndex, string AgentName)>();
+            var approvalPrompt = humanInLoop.ApprovalPrompt;
+            var enableClarificationFlag = humanInLoop.EnableClarificationFlag;
 
             var builder = new WorkflowBuilder(agents[0]);
             for (var i = 0; i < agents.Count; i++)
             {
                 var portId = ReviewPortId(i);
-                var gate = new StepReviewGateExecutor($"review-gate-{i}", i, agentDefs[i].Name, approvalPrompt);
-                var port = RequestPort.Create<StepReviewRequest, string>(portId);
                 var isTerminalStep = i + 1 >= agents.Count;
-                var complete = new StepReviewCompleteExecutor($"review-complete-{i}", isTerminalStep);
+                var selfAgentExecutorId = ComputeExecutorId(agents[i]);
+                var nextAgentExecutorId = isTerminalStep ? null : ComputeExecutorId(agents[i + 1]);
+                var reviewExecutor = new StepReviewExecutor(
+                    $"review-{i}", i, agentDefs[i].Name, approvalPrompt, enableClarificationFlag,
+                    selfAgentExecutorId, nextAgentExecutorId, isTerminalStep);
+                var port = RequestPort.Create<StepReviewRequest, string>(portId);
 
                 builder = builder
-                    .AddEdge(agents[i], gate)
-                    .AddEdge(gate, port)
-                    .AddEdge(port, complete);
+                    .AddEdge(agents[i], reviewExecutor)     // agent output -> review executor (sends request)
+                    .AddEdge(reviewExecutor, port)           // review executor -> port (the request itself)
+                    .AddEdge(port, reviewExecutor)           // port's answer routes back to the SAME executor
+                    .AddEdge(reviewExecutor, agents[i]);     // clarification loop-back (used only when needed)
 
                 portMeta[portId] = (i, agentDefs[i].Name);
 
                 builder = i + 1 < agents.Count
-                    ? builder.AddEdge(complete, agents[i + 1])
-                    : builder.WithOutputFrom(complete);
+                    ? builder.AddEdge(reviewExecutor, agents[i + 1])   // forward path (used when not clarifying)
+                    : builder.WithOutputFrom(reviewExecutor);
             }
 
             return (builder.Build(), portMeta);
@@ -743,6 +761,8 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             session.PendingAgentName = document.PendingAgentName;
             session.PendingOutput = document.PendingOutput;
             session.PendingApprovalPrompt = document.PendingApprovalPrompt;
+            session.PendingNeedsClarification = document.PendingNeedsClarification;
+            session.PendingClarificationQuestion = document.PendingClarificationQuestion;
             return session;
         }
 
@@ -819,9 +839,10 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             var checkpointCtx = new CheckpointContext(true, _checkpointStore, document);
 
             var agentDefs = orchestrator.Agents;
-            var agents = await CreateAgentsAsync(agentDefs, ct);
-            var approvalPrompt = checkpointing.HumanInLoop?.ApprovalPrompt;
-            var (workflow, portMeta) = BuildReviewableSequentialWorkflow(approvalPrompt, agents, agentDefs);
+            var humanInLoop = checkpointing.HumanInLoop
+                ?? throw new InvalidOperationException($"Orchestrator '{orchestrator.Id}' has a pending review but no humanInLoop configuration.");
+            var agents = await CreateAgentsAsync(agentDefs, ct, humanInLoop.EnableClarificationFlag);
+            var (workflow, portMeta) = BuildReviewableSequentialWorkflow(humanInLoop, agents, agentDefs);
 
             var execIdToName = new Dictionary<string, string>();
             for (var i = 0; i < agents.Count; i++)
@@ -944,6 +965,8 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             session.PendingAgentName = null;
             session.PendingOutput = null;
             session.PendingApprovalPrompt = null;
+            session.PendingNeedsClarification = false;
+            session.PendingClarificationQuestion = null;
 
             document.Status = StatusRunning;
             document.Error = null;
@@ -952,6 +975,8 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
             document.PendingAgentName = null;
             document.PendingOutput = null;
             document.PendingApprovalPrompt = null;
+            document.PendingNeedsClarification = false;
+            document.PendingClarificationQuestion = null;
 
             SyncStepsFromDocument(session, document);
 
@@ -963,7 +988,7 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
                 await checkpointCtx.Store!.SaveAsync(document, persistCts.Token);
 
             var agentDefs = orchestrator.Agents;
-            var agents = await CreateAgentsAsync(agentDefs, ct);
+            var agents = await CreateAgentsAsync(agentDefs, ct, checkpointing.HumanInLoop?.EnableClarificationFlag ?? false);
             var (workflow, portMeta) = BuildSequentialWorkflow(checkpointing.HumanInLoop, agents, agentDefs);
 
             var execIdToName = new Dictionary<string, string>();
@@ -1071,7 +1096,15 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
                     await checkpointCtx.Store!.SaveAsync(checkpointCtx.Document!, persistCts.Token);
                 await run.DisposeAsync();
 
-                return new ExecuteResponse { SessionId = session.SessionId, Status = StatusPendingApproval, Output = session.PendingOutput, Steps = session.Steps.ToList() };
+                return new ExecuteResponse
+                {
+                    SessionId = session.SessionId,
+                    Status = StatusPendingApproval,
+                    Output = session.PendingOutput,
+                    Steps = session.Steps.ToList(),
+                    PendingNeedsClarification = session.PendingNeedsClarification,
+                    PendingClarificationQuestion = session.PendingClarificationQuestion
+                };
             }
 
             await run.DisposeAsync();
@@ -1123,7 +1156,7 @@ namespace OpenAgentOrchestrator.Command.Application.Engine
         /// <summary>
         /// Like <see cref="ExtractFinalAssistantText"/>, but returns null (rather than falling back
         /// to concatenating every message) when the batch contains no assistant-authored message.
-        /// Used by <see cref="StepReviewGateExecutor"/> to distinguish an agent's own generated
+        /// Used by <see cref="StepReviewExecutor"/> to distinguish an agent's own generated
         /// response from a forwarded-input batch it also relays.
         /// </summary>
         internal static string? ExtractFinalAssistantTextOrNull(IReadOnlyList<ChatMessage> messages)

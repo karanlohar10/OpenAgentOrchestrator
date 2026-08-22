@@ -32,6 +32,16 @@ namespace OpenAgentOrchestrator.Query.Domain.Model
         public int? PendingStepIndex { get; set; }
         public string? PendingOutput { get; set; }
         public string? PendingApprovalPrompt { get; set; }
+
+        /// <summary>
+        /// <see langword="true"/> when the pending step's output was parsed as a clarification
+        /// envelope with <c>needsClarification: true</c> - see
+        /// <see cref="SessionStatusResponse.PendingNeedsClarification"/>.
+        /// </summary>
+        public bool PendingNeedsClarification { get; set; }
+
+        /// <summary>The clarifying question the agent asked, when <see cref="PendingNeedsClarification"/> is true.</summary>
+        public string? PendingClarificationQuestion { get; set; }
     }
 
     /// <summary>A single durable step checkpoint - one per completed agent step.</summary>

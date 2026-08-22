@@ -42,8 +42,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 chatClientFactory.Object,
                 toolBinderFactory.Object,
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -76,6 +74,81 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
         }
 
         [TestMethod]
+        public async Task CreateAgentAsync_AppendsClarificationEnvelopeInstructions_WhenRequireClarificationEnvelopeIsTrue()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "planner",
+                Instructions = "Plan the work.",
+                Provider = "azure",
+                Model = "gpt-4o-mini"
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition, requireClarificationEnvelope: true);
+            await RunAgentAsync(agent, "hello");
+
+            // Assert
+            recordingClient.OptionsByCall.Should().ContainSingle();
+            var instructions = recordingClient.OptionsByCall[0]!.Instructions;
+            instructions.Should().StartWith("Plan the work.");
+            instructions.Should().Contain("needsClarification");
+            instructions.Should().Contain("clarificationQuestion");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_DoesNotAppendClarificationEnvelopeInstructions_WhenRequireClarificationEnvelopeIsFalse()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "planner",
+                Instructions = "Plan the work.",
+                Provider = "azure",
+                Model = "gpt-4o-mini"
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+            await RunAgentAsync(agent, "hello");
+
+            // Assert
+            recordingClient.OptionsByCall.Should().ContainSingle();
+            recordingClient.OptionsByCall[0]!.Instructions.Should().Be("Plan the work.");
+        }
+
+        [TestMethod]
         public async Task CreateAgentAsync_BindsToolsAndBuildsJsonSchemaResponseFormat()
         {
             // Arrange
@@ -95,13 +168,11 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var toolBinderFactory = new Mock<IToolBinderFactory>();
             toolBinderFactory
                 .Setup(factory => factory.BindToolsAsync(It.IsAny<IEnumerable<ToolDefinition>>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync([tool]);
+                .ReturnsAsync(new ToolBindingResult([tool]));
 
             var sut = new AgentFactory(
                 chatClientFactory.Object,
                 toolBinderFactory.Object,
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -147,8 +218,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 chatClientFactory.Object,
                 Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -169,8 +238,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 Mock.Of<IChatClientFactory>(),
                 Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -203,8 +270,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 chatClientFactory.Object,
                 Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -252,8 +317,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 chatClientFactory.Object,
                 Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(defaultProvider: "azure", defaultModel: "gpt-4o-mini"),
                 CreateObservabilityOptions(),
@@ -280,8 +343,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 Mock.Of<IChatClientFactory>(),
                 Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -303,8 +364,6 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             var sut = new AgentFactory(
                 Mock.Of<IChatClientFactory>(),
                 Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                Mock.Of<IWebSearchToolFactory>(),
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -320,7 +379,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
         }
 
         [TestMethod]
-        public async Task CreateAgentAsync_WhenWebSearchToolEnabled_AttachesToolFromFactory()
+        public async Task CreateAgentAsync_WhenToolsIncludeWebSearch_AttachesBoundTool()
         {
             // Arrange
             var recordingClient = new RecordingChatClient((messages, _, _) =>
@@ -336,28 +395,27 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 description: "Searches the web",
                 serializerOptions: null);
 
-            var webSearchToolFactory = new Mock<IWebSearchToolFactory>();
-            webSearchToolFactory
-                .Setup(factory => factory.Create(It.IsAny<WebSearchToolDefinition>()))
-                .Returns(webSearchTool);
+            var toolBinderFactory = new Mock<IToolBinderFactory>();
+            toolBinderFactory
+                .Setup(factory => factory.BindToolsAsync(It.IsAny<IEnumerable<ToolDefinition>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ToolBindingResult([webSearchTool]));
 
             var sut = new AgentFactory(
                 chatClientFactory.Object,
-                Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                webSearchToolFactory.Object,
+                toolBinderFactory.Object,
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
                 NullLogger<AgentFactory>.Instance);
 
+            var toolDefinition = new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "test-key" };
             var agentDefinition = new AgentDefinition
             {
                 Name = "research-agent",
                 Instructions = "Research things.",
                 Provider = "azure",
                 Model = "gpt-4o-mini",
-                WebSearchTool = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "test-key" }
+                Tools = [toolDefinition]
             };
 
             // Act
@@ -368,11 +426,11 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             recordingClient.OptionsByCall.Should().ContainSingle();
             recordingClient.OptionsByCall[0]!.Tools.Should().ContainSingle()
                 .Which.Name.Should().Be("web_search");
-            webSearchToolFactory.Verify(factory => factory.Create(agentDefinition.WebSearchTool), Times.Once);
+            toolBinderFactory.Verify(factory => factory.BindToolsAsync(agentDefinition.Tools, It.IsAny<CancellationToken>()), Times.Once);
         }
 
         [TestMethod]
-        public async Task CreateAgentAsync_WhenWebSearchToolDisabled_DoesNotAttachTool()
+        public async Task CreateAgentAsync_WhenNoToolsConfigured_DoesNotBindOrAttachTools()
         {
             // Arrange
             var recordingClient = new RecordingChatClient((messages, _, _) =>
@@ -382,13 +440,11 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
                 .Returns(recordingClient);
 
-            var webSearchToolFactory = new Mock<IWebSearchToolFactory>();
+            var toolBinderFactory = new Mock<IToolBinderFactory>();
 
             var sut = new AgentFactory(
                 chatClientFactory.Object,
-                Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                webSearchToolFactory.Object,
+                toolBinderFactory.Object,
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -409,15 +465,18 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             // Assert
             recordingClient.OptionsByCall.Should().ContainSingle();
             recordingClient.OptionsByCall[0]!.Tools.Should().BeNull();
-            webSearchToolFactory.Verify(factory => factory.Create(It.IsAny<WebSearchToolDefinition>()), Times.Never);
+            toolBinderFactory.Verify(
+                factory => factory.BindToolsAsync(It.IsAny<IEnumerable<ToolDefinition>>(), It.IsAny<CancellationToken>()),
+                Times.Never);
         }
 
         [TestMethod]
         public async Task CreateAgentAsync_HarnessAgentWithDisableWebSearchAndWebSearchTool_CreatesSuccessfully()
         {
             // Arrange - smoke test: harness agent creation must not throw when DisableWebSearch
-            // is set alongside a custom webSearchTool (the combination the docs recommend to
-            // avoid the agent receiving both a hosted and a custom search tool at once).
+            // is set alongside a custom "web-search"-typed tool (the combination the docs
+            // recommend to avoid the agent receiving both a hosted and a custom search tool at
+            // once).
             var recordingClient = new RecordingChatClient((messages, _, _) =>
                 $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
             var chatClientFactory = new Mock<IChatClientFactory>();
@@ -431,16 +490,14 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 description: "Searches the web",
                 serializerOptions: null);
 
-            var webSearchToolFactory = new Mock<IWebSearchToolFactory>();
-            webSearchToolFactory
-                .Setup(factory => factory.Create(It.IsAny<WebSearchToolDefinition>()))
-                .Returns(webSearchTool);
+            var toolBinderFactory = new Mock<IToolBinderFactory>();
+            toolBinderFactory
+                .Setup(factory => factory.BindToolsAsync(It.IsAny<IEnumerable<ToolDefinition>>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new ToolBindingResult([webSearchTool]));
 
             var sut = new AgentFactory(
                 chatClientFactory.Object,
-                Mock.Of<IToolBinderFactory>(),
-                Mock.Of<IShellToolFactory>(),
-                webSearchToolFactory.Object,
+                toolBinderFactory.Object,
                 CreateConfigStore(),
                 CreateAgentDefaults(),
                 CreateObservabilityOptions(),
@@ -454,7 +511,7 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
                 Model = "gpt-4o-mini",
                 AgentType = "harness",
                 Harness = new HarnessOptionsDefinition { DisableWebSearch = true },
-                WebSearchTool = new WebSearchToolDefinition { Enabled = true, Provider = "tavily", ApiKey = "test-key" }
+                Tools = [new ToolDefinition { Type = "web-search", Name = "web-search", Provider = "tavily", ApiKey = "test-key" }]
             };
 
             // Act
@@ -463,6 +520,141 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
             // Assert
             agent.Should().NotBeNull();
             agent.Name.Should().Be("research-agent");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_ChatAgentWithPlanningDisabled_DoesNotWrapInLoopAgent()
+        {
+            // Arrange - regression: omitting Planning must leave agent behavior/type unchanged.
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "planner",
+                Instructions = "Plan the work.",
+                Provider = "azure",
+                Model = "gpt-4o-mini"
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+
+            // Assert
+#pragma warning disable MAAI001 // LoopAgent is experimental in Microsoft.Agents.AI.
+            agent.Should().NotBeOfType<LoopAgent>();
+#pragma warning restore MAAI001
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_ChatAgentWithTodoLoopEnabled_WrapsInLoopAgentWithHardcodedMaxIterations()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "executor",
+                Instructions = "Execute the plan.",
+                Provider = "azure",
+                Model = "gpt-4o-mini",
+                Planning = new PlanningDefinition
+                {
+                    EnableTodos = true,
+                    EnableAgentMode = true,
+                    EnableTodoLoop = true,
+                    LoopModes = ["execute"]
+                }
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+
+            // Assert - LoopAgent is a DelegatingAIAgent, so Name/Id still proxy through, keeping
+            // WorkflowEngine.ComputeExecutorId stability unaffected by this wrapping.
+#pragma warning disable MAAI001 // LoopAgent is experimental in Microsoft.Agents.AI.
+            agent.Should().BeOfType<LoopAgent>();
+#pragma warning restore MAAI001
+            agent.Name.Should().Be("executor");
+            agent.Id.Should().Be("executor");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_HarnessAgentWithPlanning_CreatesSuccessfullyWithoutExternalLoopWrapping()
+        {
+            // Arrange - harness agents get todos/agent-mode/loop natively via HarnessAgentOptions;
+            // no external LoopAgent wrapping should be applied (the harness owns its own pipeline).
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "harness-planner",
+                Instructions = "Plan and execute.",
+                Provider = "azure",
+                Model = "gpt-4o-mini",
+                AgentType = "harness",
+                Planning = new PlanningDefinition
+                {
+                    EnableTodos = true,
+                    EnableAgentMode = true,
+                    DefaultMode = "plan",
+                    Modes =
+                    [
+                        new AgentModeDefinition { Name = "plan", Instructions = "Ask clarifying questions." },
+                        new AgentModeDefinition { Name = "execute", Instructions = "Work autonomously." }
+                    ],
+                    EnableTodoLoop = true,
+                    LoopModes = ["execute"]
+                }
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition);
+
+            // Assert
+            agent.Should().NotBeNull();
+#pragma warning disable MAAI001 // LoopAgent is experimental in Microsoft.Agents.AI.
+            agent.Should().NotBeOfType<LoopAgent>();
+#pragma warning restore MAAI001
+            agent.Name.Should().Be("harness-planner");
         }
 
         private static IConfigStore CreateConfigStore()

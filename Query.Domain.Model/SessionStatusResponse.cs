@@ -20,5 +20,18 @@ namespace OpenAgentOrchestrator.Query.Domain.Model
 
         /// <summary>The agent's output text awaiting human review/edit.</summary>
         public string? PendingOutput { get; set; }
+
+        /// <summary>
+        /// <see langword="true"/> when the pending step's output was parsed as a clarification
+        /// envelope with <c>needsClarification: true</c> - i.e. the agent is asking a genuine
+        /// question rather than presenting a routine result awaiting approval. Always
+        /// <see langword="false"/> when the orchestrator's
+        /// <c>checkpointing.humanInLoop.enableClarificationFlag</c> is off. Answer it the same way
+        /// as any other pending review, via <c>$resume</c>.
+        /// </summary>
+        public bool PendingNeedsClarification { get; set; }
+
+        /// <summary>The clarifying question the agent asked, when <see cref="PendingNeedsClarification"/> is true.</summary>
+        public string? PendingClarificationQuestion { get; set; }
     }
 }

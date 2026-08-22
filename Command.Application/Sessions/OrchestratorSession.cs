@@ -34,5 +34,20 @@ namespace OpenAgentOrchestrator.Command.Application.Sessions
 
         /// <summary>The agent's original (unedited) output text awaiting human review/approval.</summary>
         public string? PendingOutput { get; set; }
+
+        /// <summary>
+        /// <see langword="true"/> when the pending step's output was parsed as a
+        /// <see cref="Engine.ClarificationEnvelope"/> with <c>needsClarification: true</c> - i.e.
+        /// the agent is asking a genuine question rather than presenting a routine result awaiting
+        /// approval. Always <see langword="false"/> when
+        /// <see cref="OpenAgentOrchestrator.Command.Domain.Model.Configuration.HumanInLoopDefinition.EnableClarificationFlag"/> is
+        /// off. The answer to the pending review is unaffected either way - it still goes through
+        /// the same <c>$resume</c> flow - but callers can use this to render a question prompt
+        /// instead of a generic review prompt.
+        /// </summary>
+        public bool PendingNeedsClarification { get; set; }
+
+        /// <summary>The clarifying question the agent asked, when <see cref="PendingNeedsClarification"/> is true.</summary>
+        public string? PendingClarificationQuestion { get; set; }
     }
 }

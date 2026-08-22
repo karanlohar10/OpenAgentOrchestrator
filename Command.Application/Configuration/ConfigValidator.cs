@@ -20,7 +20,7 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
     public sealed class ConfigValidator : IConfigValidator
     {
         private static readonly HashSet<string> ValidPatterns = ["sequential"];
-        private static readonly HashSet<string> ValidToolTypes = ["mcp"];
+        private static readonly HashSet<string> ValidToolTypes = ["mcp", "shell", "web-search"];
         private static readonly HashSet<string> ValidProviderTypes = ["azure-openai"];
         private static readonly HashSet<string> ValidResponseFormatTypes = ["json_schema", "json_object", "text"];
         private static readonly HashSet<string> ValidAgentTypes = ["chat", "harness"];
@@ -183,11 +183,8 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
 
             ValidateAgentType(orchestrator, agent, result);
 
-            if (agent.ShellTool is { Enabled: true } shellTool)
-                ValidateShellTool(orchestrator, agent, shellTool, result);
-
-            if (agent.WebSearchTool is { Enabled: true } webSearchTool)
-                ValidateWebSearchTool(orchestrator, agent, webSearchTool, result);
+            if (agent.Planning != null)
+                ValidatePlanning(orchestrator, agent, result);
         }
 
         private static void ValidateAgentType(OrchestratorDefinition orchestrator, AgentDefinition agent, ValidationResult result)
@@ -199,14 +196,34 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             }
         }
 
-        private static void ValidateShellTool(OrchestratorDefinition orchestrator, AgentDefinition agent, ShellToolDefinition shellTool, ValidationResult result)
+        private static void ValidatePlanning(OrchestratorDefinition orchestrator, AgentDefinition agent, ValidationResult result)
         {
-            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', shellTool";
+            var planning = agent.Planning!;
+            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', planning";
 
-            if (!ValidShellToolModes.Contains(shellTool.Mode))
-                result.Errors.Add($"{prefix}: invalid mode '{shellTool.Mode}'. Must be one of: {string.Join(", ", ValidShellToolModes)}.");
+            if (planning.EnableTodoLoop && !planning.EnableTodos)
+                result.Errors.Add($"{prefix}: enableTodoLoop requires enableTodos to also be true.");
 
-            if (!shellTool.AcknowledgeUnsafe)
+            if (planning.Modes is { Count: > 0 })
+            {
+                foreach (var mode in planning.Modes)
+                {
+                    if (string.IsNullOrWhiteSpace(mode.Name))
+                        result.Errors.Add($"{prefix}: a mode entry has a blank name.");
+                    if (string.IsNullOrWhiteSpace(mode.Instructions))
+                        result.Errors.Add($"{prefix}: mode '{mode.Name}' has blank instructions.");
+                }
+            }
+        }
+
+        private static void ValidateShellTool(OrchestratorDefinition orchestrator, AgentDefinition agent, ToolDefinition tool, ValidationResult result)
+        {
+            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', tool '{tool.Name}'";
+
+            if (!ValidShellToolModes.Contains(tool.Mode))
+                result.Errors.Add($"{prefix}: invalid mode '{tool.Mode}'. Must be one of: {string.Join(", ", ValidShellToolModes)}.");
+
+            if (!tool.AcknowledgeUnsafe)
             {
                 result.Errors.Add(
                     $"{prefix}: enabled but 'acknowledgeUnsafe: true' was not set. Shell execution can modify " +
@@ -214,18 +231,18 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             }
         }
 
-        private static void ValidateWebSearchTool(OrchestratorDefinition orchestrator, AgentDefinition agent, WebSearchToolDefinition webSearchTool, ValidationResult result)
+        private static void ValidateWebSearchTool(OrchestratorDefinition orchestrator, AgentDefinition agent, ToolDefinition tool, ValidationResult result)
         {
-            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', webSearchTool";
+            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', tool '{tool.Name}'";
 
-            if (!ValidWebSearchProviders.Contains(webSearchTool.Provider.ToLowerInvariant()))
-                result.Errors.Add($"{prefix}: invalid provider '{webSearchTool.Provider}'. Must be one of: {string.Join(", ", ValidWebSearchProviders)}.");
+            if (!ValidWebSearchProviders.Contains(tool.Provider.ToLowerInvariant()))
+                result.Errors.Add($"{prefix}: invalid provider '{tool.Provider}'. Must be one of: {string.Join(", ", ValidWebSearchProviders)}.");
 
-            if (string.IsNullOrWhiteSpace(webSearchTool.ApiKey))
+            if (string.IsNullOrWhiteSpace(tool.ApiKey))
                 result.Errors.Add($"{prefix}: apiKey is required.");
 
-            if (string.Equals(webSearchTool.Provider, "google", StringComparison.OrdinalIgnoreCase)
-                && string.IsNullOrWhiteSpace(webSearchTool.SearchEngineId))
+            if (string.Equals(tool.Provider, "google", StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(tool.SearchEngineId))
             {
                 result.Errors.Add($"{prefix}: provider 'google' requires searchEngineId (the Custom Search Engine 'cx' id).");
             }
@@ -233,14 +250,33 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
 
         private static void ValidateToolInternal(OrchestratorDefinition orchestrator, AgentDefinition agent, ToolDefinition tool, ValidationResult result)
         {
+            if (string.IsNullOrWhiteSpace(tool.Name))
+                result.Errors.Add($"Orchestrator '{orchestrator.Id}', agent '{agent.Name}': tool name is required.");
+
             if (!ValidToolTypes.Contains(tool.Type))
+            {
                 result.Errors.Add($"Orchestrator '{orchestrator.Id}', agent '{agent.Name}': invalid tool type '{tool.Type}'. Must be one of: {string.Join(", ", ValidToolTypes)}.");
+                return;
+            }
 
-            if (tool.Type == "mcp" && string.IsNullOrWhiteSpace(tool.Endpoint))
-                result.Errors.Add($"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', tool '{tool.Name}': MCP tools require an endpoint.");
+            switch (tool.Type)
+            {
+                case "mcp":
+                    if (string.IsNullOrWhiteSpace(tool.Endpoint))
+                        result.Errors.Add($"Orchestrator '{orchestrator.Id}', agent '{agent.Name}', tool '{tool.Name}': MCP tools require an endpoint.");
 
-            if (string.Equals(tool.AuthType, "bearer", StringComparison.OrdinalIgnoreCase))
-                ValidateBearerAuth(orchestrator, agent, tool, result);
+                    if (string.Equals(tool.AuthType, "bearer", StringComparison.OrdinalIgnoreCase))
+                        ValidateBearerAuth(orchestrator, agent, tool, result);
+                    break;
+
+                case "shell":
+                    ValidateShellTool(orchestrator, agent, tool, result);
+                    break;
+
+                case "web-search":
+                    ValidateWebSearchTool(orchestrator, agent, tool, result);
+                    break;
+            }
         }
 
         private static void ValidateBearerAuth(OrchestratorDefinition orchestrator, AgentDefinition agent, ToolDefinition tool, ValidationResult result)
@@ -288,6 +324,9 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
         {
             if (checkpointing.HumanInLoop?.Enabled == true && !checkpointing.Enabled)
                 result.Errors.Add($"{scopeLabel}: humanInLoop is enabled but checkpointing is not - checkpointing must be enabled for human-in-the-loop resume to work.");
+
+            if (checkpointing.HumanInLoop is { EnableClarificationFlag: true, Enabled: false })
+                result.Errors.Add($"{scopeLabel}: humanInLoop.enableClarificationFlag is set but humanInLoop.enabled is not - enableClarificationFlag is only meaningful when humanInLoop is enabled.");
         }
     }
 }

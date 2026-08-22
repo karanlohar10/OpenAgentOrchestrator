@@ -27,5 +27,21 @@ namespace OpenAgentOrchestrator.Command.Domain.Model.Configuration
     {
         public bool Enabled { get; set; }
         public string? ApprovalPrompt { get; set; }
+
+        /// <summary>
+        /// Opt-in (default <see langword="false"/>). When <see langword="true"/>, every agent in
+        /// the orchestrator is instructed to respond with a fixed JSON envelope -
+        /// <c>{ "needsClarification": bool, "clarificationQuestion": string?, "content": string }</c>
+        /// - and the review gate parses it so the pending-review payload can tell callers whether
+        /// the paused step is a genuine question the agent needs answered (in which case the
+        /// human's answer is routed back to the *same* agent for another turn) or a routine step
+        /// awaiting approval/edit (in which case the answer flows to the next agent, as normal).
+        /// A step still pauses for review either way - this only changes where the answer goes
+        /// afterwards, and enriches the pending-review payload with
+        /// <c>PendingNeedsClarification</c>/<c>PendingClarificationQuestion</c>. Only meaningful
+        /// when <see cref="Enabled"/> is also <see langword="true"/> (enforced by
+        /// <c>ConfigValidator</c>).
+        /// </summary>
+        public bool EnableClarificationFlag { get; set; }
     }
 }

@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Agents.AI;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Agents.AI.Workflows.Checkpointing;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -201,6 +202,173 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
             completedCheckpoint.Steps.Should().HaveCount(2);
 
             File.Exists(System.IO.Path.Combine(artifactDirectory.Path, $"{executeResponse.SessionId}.json")).Should().BeTrue();
+        }
+
+        [TestMethod]
+        public async Task ExecuteAsync_ClarificationFlagEnabled_NeedsClarificationTrue_LoopsBackToSameAgentOnAnswer()
+        {
+            // Arrange
+            using var artifactDirectory = new TestArtifactDirectory("workflow-engine-clarification-loopback");
+            var callCount = 0;
+            var researcherClient = new RecordingChatClient((messages, _, _) =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? """{"needsClarification": true, "clarificationQuestion": "Which patient ID?", "content": ""}"""
+                    : $$"""{"needsClarification": false, "clarificationQuestion": null, "content": "final:{{WorkflowTestDoubles.GetLatestUserText(messages)}}"}""";
+            });
+
+            var orchestrator = CreateOrchestrator(
+                agents: [new AgentDefinition { Name = "researcher", Instructions = "Research.", Provider = "test-provider", Model = "test-model" }],
+                humanInLoop: new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true },
+                checkpointing: new CheckpointingDefinition { Enabled = true });
+
+            var sessionStore = new InMemorySessionStore();
+            var engine = CreateEngine(
+                orchestrator,
+                sessionStore,
+                agentsByName: new Dictionary<string, AIAgent>
+                {
+                    ["researcher"] = WorkflowTestDoubles.CreateAgent("researcher", researcherClient)
+                },
+                checkpointStore: new JsonFileWorkflowCheckpointStore(artifactDirectory.Path));
+
+            // Act: initial run pauses on the agent's own clarifying question.
+            var executeResponse = await engine.ExecuteAsync(orchestrator, new ExecuteRequest { Input = "input" });
+
+            // Answer the question - it must be routed back to the SAME agent (researcher), not
+            // forwarded anywhere else, since only one agent exists in this orchestrator.
+            var answerResponse = await engine.ResumeAsync(
+                orchestrator,
+                executeResponse.SessionId,
+                new ResumeRequest { Action = ResumeAction.Continue, EditedOutput = "patient-123" });
+
+            // The agent's second (post-answer) response no longer needs clarification, but the
+            // step still pauses for review (clarification only changes what happens once answered,
+            // not whether a step pauses).
+            var finalResponse = await engine.ResumeAsync(
+                orchestrator,
+                executeResponse.SessionId,
+                new ResumeRequest { Action = ResumeAction.Continue });
+
+            // Assert
+            executeResponse.Status.Should().Be("pending_approval");
+            executeResponse.PendingNeedsClarification.Should().BeTrue();
+            executeResponse.PendingClarificationQuestion.Should().Be("Which patient ID?");
+
+            answerResponse.Status.Should().Be("pending_approval");
+            answerResponse.PendingNeedsClarification.Should().BeFalse();
+            answerResponse.PendingClarificationQuestion.Should().BeNull();
+            answerResponse.Output.Should().Be("final:patient-123");
+
+            finalResponse.Status.Should().Be("completed");
+            finalResponse.Output.Should().Be("final:patient-123");
+
+            // Proves (rather than just architecturally infers) that the loop-back round genuinely
+            // carries conversation history: MAF wraps each workflow agent node in its own stateful
+            // AIAgentHostExecutor, which keeps a per-node AgentSession/thread that is itself part
+            // of the checkpoint MAF persists/restores across the pause -> $resume round-trip. So
+            // even though we only ever send the single new answer message on loop-back, the
+            // underlying chat client still receives the FULL prior turn (including the agent's own
+            // question) alongside it - the model genuinely "remembers" asking the question.
+            researcherClient.MessagesByCall.Should().HaveCount(2);
+            researcherClient.MessagesByCall[1].Should().HaveCountGreaterThan(1,
+                "the agent's own prior turn (its clarifying question) must still be present " +
+                "alongside the new answer - not just the answer in isolation");
+            researcherClient.MessagesByCall[1].Should().Contain(
+                m => m.Role == ChatRole.Assistant && m.Text != null && m.Text.Contains("Which patient ID?"));
+            researcherClient.MessagesByCall[1].Should().Contain(
+                m => m.Role == ChatRole.User && m.Text == "patient-123");
+
+            // Two rounds against the same agent produced two distinct, fully visible step records.
+            finalResponse.Steps.Should().HaveCount(2);
+            finalResponse.Steps![0].AgentName.Should().Be("researcher");
+            finalResponse.Steps![1].AgentName.Should().Be("researcher");
+        }
+
+        [TestMethod]
+        public async Task ExecuteAsync_ClarificationFlagEnabled_NeedsClarificationFalse_ForwardsNormallyWithoutLoopback()
+        {
+            // Arrange
+            using var artifactDirectory = new TestArtifactDirectory("workflow-engine-clarification-forward");
+            var researcherClient = new RecordingChatClient((messages, _, _) =>
+                $$"""{"needsClarification": false, "clarificationQuestion": null, "content": "draft:{{WorkflowTestDoubles.GetLatestUserText(messages)}}"}""");
+            var writerClient = new RecordingChatClient((messages, _, _) =>
+                $"final:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+
+            var orchestrator = CreateOrchestrator(
+                agents:
+                [
+                    new AgentDefinition { Name = "researcher", Instructions = "Research.", Provider = "test-provider", Model = "test-model" },
+                    new AgentDefinition { Name = "writer", Instructions = "Write.", Provider = "test-provider", Model = "test-model" }
+                ],
+                humanInLoop: new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true },
+                checkpointing: new CheckpointingDefinition { Enabled = true });
+
+            var sessionStore = new InMemorySessionStore();
+            var engine = CreateEngine(
+                orchestrator,
+                sessionStore,
+                agentsByName: new Dictionary<string, AIAgent>
+                {
+                    ["researcher"] = WorkflowTestDoubles.CreateAgent("researcher", researcherClient),
+                    ["writer"] = WorkflowTestDoubles.CreateAgent("writer", writerClient)
+                },
+                checkpointStore: new JsonFileWorkflowCheckpointStore(artifactDirectory.Path));
+
+            // Act
+            var executeResponse = await engine.ExecuteAsync(orchestrator, new ExecuteRequest { Input = "input" });
+            var approveResponse = await engine.ResumeAsync(
+                orchestrator,
+                executeResponse.SessionId,
+                new ResumeRequest { Action = ResumeAction.Continue });
+
+            // Assert: no clarification was requested, so the answer forwarded straight to writer -
+            // matching pre-existing (flag-off) behavior exactly, just with the extra metadata false.
+            executeResponse.Status.Should().Be("pending_approval");
+            executeResponse.PendingNeedsClarification.Should().BeFalse();
+            executeResponse.PendingClarificationQuestion.Should().BeNull();
+            executeResponse.Output.Should().Be("draft:input");
+
+            approveResponse.Status.Should().Be("pending_approval");
+            approveResponse.Output.Should().Be("final:draft:input");
+            approveResponse.Steps.Should().HaveCount(2);
+            approveResponse.Steps![0].AgentName.Should().Be("researcher");
+            approveResponse.Steps![1].AgentName.Should().Be("writer");
+        }
+
+        [TestMethod]
+        public async Task ExecuteAsync_ClarificationFlagEnabled_MalformedEnvelope_FailsSafeAndStillPauses()
+        {
+            // Arrange
+            using var artifactDirectory = new TestArtifactDirectory("workflow-engine-clarification-malformed");
+            var researcherClient = new RecordingChatClient((messages, _, _) =>
+                $"not json at all: {WorkflowTestDoubles.GetLatestUserText(messages)}");
+
+            var orchestrator = CreateOrchestrator(
+                agents: [new AgentDefinition { Name = "researcher", Instructions = "Research.", Provider = "test-provider", Model = "test-model" }],
+                humanInLoop: new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true },
+                checkpointing: new CheckpointingDefinition { Enabled = true });
+
+            var sessionStore = new InMemorySessionStore();
+            var engine = CreateEngine(
+                orchestrator,
+                sessionStore,
+                agentsByName: new Dictionary<string, AIAgent>
+                {
+                    ["researcher"] = WorkflowTestDoubles.CreateAgent("researcher", researcherClient)
+                },
+                checkpointStore: new JsonFileWorkflowCheckpointStore(artifactDirectory.Path));
+
+            // Act
+            var executeResponse = await engine.ExecuteAsync(orchestrator, new ExecuteRequest { Input = "input" });
+
+            // Assert: malformed envelope fails safe (treated as a non-clarification result using
+            // the raw text) - the step still pauses for review as normal.
+            executeResponse.Status.Should().Be("pending_approval");
+            executeResponse.PendingNeedsClarification.Should().BeFalse();
+            executeResponse.PendingClarificationQuestion.Should().BeNull();
+            executeResponse.Output.Should().Be("not json at all: input");
         }
 
         [TestMethod]
@@ -2192,8 +2360,9 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
             agentFactoryMock
                 .Setup(factory => factory.CreateAgentAsync(
                     It.IsAny<AgentDefinition>(),
+                    It.IsAny<bool>(),
                     It.IsAny<CancellationToken>()))
-                .ReturnsAsync((AgentDefinition agentDefinition, CancellationToken _) =>
+                .ReturnsAsync((AgentDefinition agentDefinition, bool _, CancellationToken _) =>
                     agentsByName[agentDefinition.Name]);
 
             // Tests that need to inspect the persisted document (e.g. checking a file on disk)

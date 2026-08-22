@@ -6,8 +6,6 @@ using Microsoft.Extensions.Options;
 using OpenAgentOrchestrator.Command.Application.Configuration;
 using OpenAgentOrchestrator.Command.Application.Engine;
 using OpenAgentOrchestrator.Command.Application.ToolBinding;
-using OpenAgentOrchestrator.Command.Application.Tools;
-using OpenAgentOrchestrator.Command.Application.Tools.WebSearch;
 using OpenAgentOrchestrator.Command.Domain.Model.Configuration;
 
 namespace OpenAgentOrchestrator.Command.Application.Agents
@@ -16,8 +14,6 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
     {
         private readonly IChatClientFactory _chatClientFactory;
         private readonly IToolBinderFactory _toolBinderFactory;
-        private readonly IShellToolFactory _shellToolFactory;
-        private readonly IWebSearchToolFactory _webSearchToolFactory;
         private readonly IConfigStore _configStore;
         private readonly AgentDefaults _agentDefaults;
         private readonly ObservabilityOptions _observability;
@@ -26,8 +22,6 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
         public AgentFactory(
             IChatClientFactory chatClientFactory,
             IToolBinderFactory toolBinderFactory,
-            IShellToolFactory shellToolFactory,
-            IWebSearchToolFactory webSearchToolFactory,
             IConfigStore configStore,
             IOptions<AgentDefaults> agentDefaults,
             IOptions<ObservabilityOptions> observability,
@@ -35,16 +29,30 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
         {
             _chatClientFactory = chatClientFactory;
             _toolBinderFactory = toolBinderFactory;
-            _shellToolFactory = shellToolFactory;
-            _webSearchToolFactory = webSearchToolFactory;
             _configStore = configStore;
             _agentDefaults = agentDefaults.Value;
             _observability = observability.Value;
             _logger = logger;
         }
 
+        /// <summary>
+        /// Hardcoded instructions appended to an agent's own instructions when its orchestrator has
+        /// <c>checkpointing.humanInLoop.enableClarificationFlag: true</c> - requires the agent to
+        /// respond with a fixed JSON envelope so <c>StepReviewExecutor</c> can tell whether the step
+        /// is a genuine question needing a human answer, or a routine result. See
+        /// <see cref="HumanInLoopDefinition.EnableClarificationFlag"/> and
+        /// <see cref="ClarificationEnvelope"/>.
+        /// </summary>
+        internal const string ClarificationEnvelopeInstructions = """
+            You must respond with ONLY a single JSON object of this exact shape, and nothing else \
+            (no surrounding text, no markdown code fences):
+            {"needsClarification": true|false, "clarificationQuestion": "<string, required only when needsClarification is true>", "content": "<your actual answer/output, as a string>"}
+            Set "needsClarification" to true only when you genuinely cannot proceed without a human answering a specific question first - in that case, put the question in "clarificationQuestion" and leave "content" empty or set it to your partial progress so far. Otherwise set "needsClarification" to false and put your complete, real output in "content".
+            """;
+
         public async Task<AIAgent> CreateAgentAsync(
             AgentDefinition agentDef,
+            bool requireClarificationEnvelope = false,
             CancellationToken cancellationToken = default)
         {
             var model = ResolveModel(agentDef);
@@ -64,48 +72,23 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             chatClient = new RetryingChatClient(chatClient, logger: _logger);
 
             var tools = new List<AITool>();
+            IList<AIContextProvider>? contextProviders = null;
             if (agentDef.Tools is { Count: > 0 })
             {
-                var boundTools = await _toolBinderFactory.BindToolsAsync(agentDef.Tools, cancellationToken);
-                tools.AddRange(boundTools);
+                var bound = await _toolBinderFactory.BindToolsAsync(agentDef.Tools, cancellationToken);
+                tools.AddRange(bound.Tools);
+                contextProviders = bound.ContextProviders;
                 if (_logger.IsEnabled(LogLevel.Debug))
                 {
-                    _logger.LogDebug("Bound {ToolCount} MCP tools for agent '{AgentName}'", boundTools.Count, agentDef.Name);
-                }
-            }
-
-            IList<AIContextProvider>? contextProviders = null;
-            if (agentDef.ShellTool is { Enabled: true } shellToolDef)
-            {
-                // NOTE: the shell executor is created fresh per agent instantiation and is not
-                // explicitly disposed - acceptable for this hackathon-scale service, but a
-                // long-running production deployment should track and dispose it alongside the
-                // agent/workflow session lifetime.
-                var shellBinding = _shellToolFactory.Create(shellToolDef);
-                tools.Add(shellBinding.Tool);
-                contextProviders = [shellBinding.ContextProvider];
-
-                if (_logger.IsEnabled(LogLevel.Debug))
-                {
-                    _logger.LogDebug("Attached shell tool (mode '{Mode}', requireApproval={RequireApproval}) to agent '{AgentName}'",
-                        shellToolDef.Mode, shellToolDef.RequireApproval, agentDef.Name);
-                }
-            }
-
-            if (agentDef.WebSearchTool is { Enabled: true } webSearchToolDef)
-            {
-                var webSearchTool = _webSearchToolFactory.Create(webSearchToolDef);
-                tools.Add(webSearchTool);
-
-                if (_logger.IsEnabled(LogLevel.Debug))
-                {
-                    _logger.LogDebug("Attached web search tool (provider '{Provider}') to agent '{AgentName}'",
-                        webSearchToolDef.Provider, agentDef.Name);
+                    _logger.LogDebug("Bound {ToolCount} tools for agent '{AgentName}'", bound.Tools.Count, agentDef.Name);
                 }
             }
 
             var instructions = agentDef.Instructions
                 ?? throw new InvalidOperationException($"Agent '{agentDef.Name}' is missing resolved instructions.");
+
+            if (requireClarificationEnvelope)
+                instructions = $"{instructions}\n\n{ClarificationEnvelopeInstructions}";
 
             var responseFormat = BuildResponseFormat(agentDef);
 
@@ -118,7 +101,88 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
 
             return string.Equals(agentDef.AgentType, "harness", StringComparison.OrdinalIgnoreCase)
                 ? CreateHarnessAgent(agentDef, chatClient, chatOptions, contextProviders, _observability)
-                : CreateChatAgent(agentDef, chatClient, chatOptions, contextProviders, _observability);
+                : CreateChatAgentWithPlanning(agentDef, chatClient, chatOptions, contextProviders, _observability);
+        }
+
+        /// <summary>
+        /// Builds a "chat" (<c>ChatClientAgent</c>) agent with optional planning (todos/agent-mode)
+        /// support layered on via <see cref="AgentDefinition.Planning"/>, then wraps it in a
+        /// bounded <c>LoopAgent</c> when <see cref="PlanningDefinition.EnableTodoLoop"/> is set.
+        /// Harness agents get equivalent behavior natively through <c>HarnessAgentOptions</c>
+        /// instead (see <see cref="CreateHarnessAgent"/>) - the harness already owns its own
+        /// looping/provider pipeline, so wrapping it externally here would double it up.
+        /// </summary>
+        private static AIAgent CreateChatAgentWithPlanning(
+            AgentDefinition agentDef, IChatClient chatClient, ChatOptions chatOptions, IList<AIContextProvider>? contextProviders,
+            ObservabilityOptions observability)
+        {
+            var planning = agentDef.Planning;
+            if (planning is { EnableTodos: true } or { EnableAgentMode: true })
+            {
+                var providers = contextProviders is null ? new List<AIContextProvider>() : new List<AIContextProvider>(contextProviders);
+
+                if (planning.EnableTodos)
+                    providers.Add(new TodoProvider());
+
+                if (planning.EnableAgentMode)
+                    providers.Add(BuildAgentModeProvider(planning));
+
+                contextProviders = providers;
+            }
+
+            AIAgent agent = CreateChatAgent(agentDef, chatClient, chatOptions, contextProviders, observability);
+
+            if (planning is { EnableTodoLoop: true })
+                agent = WrapWithTodoCompletionLoop(agent, planning);
+
+            return agent;
+        }
+
+        /// <summary>
+        /// Wraps <paramref name="agent"/> in a <c>LoopAgent</c> + <c>TodoCompletionLoopEvaluator</c>
+        /// so it keeps re-invoking itself (up to a hardcoded 5 iterations - intentionally not
+        /// configurable) while incomplete todos remain in one of
+        /// <see cref="PlanningDefinition.LoopModes"/> (default: <c>["execute"]</c>). See
+        /// https://learn.microsoft.com/agent-framework/agents/planning-and-todos. Note:
+        /// <c>LoopAgent</c> is a <c>DelegatingAIAgent</c> whose <c>Id</c>/<c>Name</c> pass through
+        /// to the wrapped inner agent, so <c>WorkflowEngine.ComputeExecutorId</c> stability is
+        /// unaffected by this wrapping.
+        /// </summary>
+        private static AIAgent WrapWithTodoCompletionLoop(AIAgent agent, PlanningDefinition planning)
+        {
+#pragma warning disable MAAI001 // LoopAgent/TodoCompletionLoopEvaluator are experimental in Microsoft.Agents.AI.
+            var evaluator = new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions
+            {
+                Modes = planning.LoopModes ?? ["execute"]
+            });
+
+            return new LoopAgent(agent, evaluator, new LoopAgentOptions { MaxIterations = 5 });
+#pragma warning restore MAAI001
+        }
+
+        /// <summary>
+        /// Maps <see cref="PlanningDefinition.DefaultMode"/>/<see cref="PlanningDefinition.Modes"/>
+        /// to an <c>AgentModeProvider</c>, falling back to the framework's built-in
+        /// <c>plan</c>/<c>execute</c> modes when <see cref="PlanningDefinition.Modes"/> is omitted.
+        /// </summary>
+        private static AgentModeProvider BuildAgentModeProvider(PlanningDefinition planning) =>
+            new(BuildAgentModeProviderOptions(planning));
+
+        private static AgentModeProviderOptions BuildAgentModeProviderOptions(PlanningDefinition planning)
+        {
+            var options = new AgentModeProviderOptions
+            {
+                DefaultMode = planning.DefaultMode ?? "plan"
+            };
+
+            if (planning.Modes is { Count: > 0 })
+            {
+                options.Modes = planning.Modes
+                    .Select(m => new AgentModeProviderOptions.AgentMode(m.Name, m.Instructions))
+                    .ToList();
+            }
+
+            return options;
         }
 
         /// <summary>
@@ -178,20 +242,44 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             ObservabilityOptions observability)
         {
             var harnessDef = agentDef.Harness ?? new HarnessOptionsDefinition();
+            var planning = agentDef.Planning;
 
-#pragma warning disable MAAI001 // MaxContextWindowTokens/MaxOutputTokens are experimental in Microsoft.Agents.AI.Harness.
-            return chatClient.AsHarnessAgent(new HarnessAgentOptions
+            var harnessOptions = new HarnessAgentOptions
             {
                 Id = agentDef.Name,
                 Name = agentDef.Name,
                 ChatOptions = chatOptions,
                 HarnessInstructions = harnessDef.HarnessInstructions,
-                MaxContextWindowTokens = harnessDef.MaxContextWindowTokens,
-                MaxOutputTokens = harnessDef.MaxOutputTokens,
                 DisableWebSearch = harnessDef.DisableWebSearch,
                 AIContextProviders = contextProviders,
-                OpenTelemetrySourceName = observability.AgentSourceName
-            });
+                OpenTelemetrySourceName = observability.AgentSourceName,
+                // The harness enables TodoProvider/AgentModeProvider by default - disable them
+                // unless explicitly opted into via config, and configure the loop natively
+                // (rather than external LoopAgent wrapping, which the chat-agent path uses) since
+                // the harness already owns its own provider/loop pipeline internally.
+                DisableTodoProvider = planning is not { EnableTodos: true },
+                DisableAgentModeProvider = planning is not { EnableAgentMode: true }
+            };
+
+            if (planning is { EnableAgentMode: true })
+                harnessOptions.AgentModeProviderOptions = BuildAgentModeProviderOptions(planning);
+
+            if (planning is { EnableTodoLoop: true })
+            {
+#pragma warning disable MAAI001 // LoopEvaluators/LoopAgentOptions/TodoCompletionLoopEvaluator are experimental.
+                harnessOptions.LoopEvaluators = [new TodoCompletionLoopEvaluator(new TodoCompletionLoopEvaluatorOptions
+                {
+                    Modes = planning.LoopModes ?? ["execute"]
+                })];
+                // Hardcoded to 5 (not configurable) - see PlanningDefinition remarks.
+                harnessOptions.LoopAgentOptions = new LoopAgentOptions { MaxIterations = 5 };
+#pragma warning restore MAAI001
+            }
+
+#pragma warning disable MAAI001 // MaxContextWindowTokens/MaxOutputTokens are experimental in Microsoft.Agents.AI.Harness.
+            harnessOptions.MaxContextWindowTokens = harnessDef.MaxContextWindowTokens;
+            harnessOptions.MaxOutputTokens = harnessDef.MaxOutputTokens;
+            return chatClient.AsHarnessAgent(harnessOptions);
 #pragma warning restore MAAI001
         }
 
