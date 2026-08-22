@@ -207,6 +207,194 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Agents
         }
 
         [TestMethod]
+        public async Task CreateAgentAsync_WhenClarificationRequired_MergesSiblingFieldsIntoJsonSchema_LeavingOriginalFieldsUnchanged()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "structured-agent",
+                Instructions = "Return structured output.",
+                Provider = "azure",
+                Model = "gpt-4o",
+                ResponseFormat = new ResponseFormatDefinition
+                {
+                    Type = "json_schema",
+                    Schema = """
+                        {
+                          "type": "object",
+                          "properties": {
+                            "summary": { "type": "string" },
+                            "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+                          },
+                          "required": ["summary", "confidence"],
+                          "additionalProperties": false
+                        }
+                        """
+                }
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition, requireClarificationEnvelope: true);
+            await RunAgentAsync(agent, "hello");
+
+            // Assert
+            recordingClient.OptionsByCall.Should().ContainSingle();
+            var options = recordingClient.OptionsByCall[0];
+            var schema = ((ChatResponseFormatJson)options!.ResponseFormat!).Schema!.Value;
+
+            var properties = schema.GetProperty("properties");
+            // Original fields are untouched - same names, still present, still required.
+            properties.TryGetProperty("summary", out _).Should().BeTrue();
+            properties.TryGetProperty("confidence", out _).Should().BeTrue();
+            // Two additive sibling fields were merged in, not nested under a wrapper property.
+            properties.TryGetProperty("needsClarification", out var needsClarificationProp).Should().BeTrue();
+            needsClarificationProp.GetProperty("type").GetString().Should().Be("boolean");
+            properties.TryGetProperty("clarificationQuestion", out _).Should().BeTrue();
+            schema.TryGetProperty("content", out _).Should().BeFalse();
+
+            var required = schema.GetProperty("required").EnumerateArray().Select(e => e.GetString()).ToList();
+            required.Should().Contain(["summary", "confidence", "needsClarification", "clarificationQuestion"]);
+
+            var instructions = options.Instructions;
+            instructions.Should().Contain("needsClarification");
+            instructions.Should().Contain("clarificationQuestion");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_WhenClarificationNotRequired_LeavesJsonSchemaUnmerged()
+        {
+            // Arrange
+            var recordingClient = new RecordingChatClient((messages, _, _) =>
+                $"answer:{WorkflowTestDoubles.GetLatestUserText(messages)}");
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(recordingClient);
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                new Mock<IToolBinderFactory>().Object,
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "structured-agent",
+                Instructions = "Return structured output.",
+                Provider = "azure",
+                Model = "gpt-4o",
+                ResponseFormat = new ResponseFormatDefinition
+                {
+                    Type = "json_schema",
+                    Schema = """{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"""
+                }
+            };
+
+            // Act
+            var agent = await sut.CreateAgentAsync(agentDefinition, requireClarificationEnvelope: false);
+            await RunAgentAsync(agent, "hello");
+
+            // Assert
+            recordingClient.OptionsByCall.Should().ContainSingle();
+            var options = recordingClient.OptionsByCall[0];
+            var schema = ((ChatResponseFormatJson)options!.ResponseFormat!).Schema!.Value;
+            schema.GetProperty("properties").TryGetProperty("needsClarification", out _).Should().BeFalse();
+            options.Instructions.Should().Be("Return structured output.");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_WhenClarificationRequired_AndSchemaAlreadyDeclaresReservedFieldName_ThrowsInvalidOperationException()
+        {
+            // Arrange
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(new RecordingChatClient((_, _, _) => "unused"));
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                Mock.Of<IToolBinderFactory>(),
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "structured-agent",
+                Instructions = "Return structured output.",
+                Provider = "azure",
+                Model = "gpt-4o",
+                ResponseFormat = new ResponseFormatDefinition
+                {
+                    Type = "json_schema",
+                    Schema = """{"type":"object","properties":{"needsClarification":{"type":"string"}},"required":["needsClarification"]}"""
+                }
+            };
+
+            // Act
+            var action = () => sut.CreateAgentAsync(agentDefinition, requireClarificationEnvelope: true);
+
+            // Assert
+            var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(action);
+            exception.Message.Should().Contain("needsClarification");
+        }
+
+        [TestMethod]
+        public async Task CreateAgentAsync_WhenClarificationRequired_AndSchemaRootIsNotAnObject_ThrowsInvalidOperationException()
+        {
+            // Arrange
+            var chatClientFactory = new Mock<IChatClientFactory>();
+            chatClientFactory
+                .Setup(factory => factory.Create(It.IsAny<ProviderDefinition>(), It.IsAny<string>()))
+                .Returns(new RecordingChatClient((_, _, _) => "unused"));
+
+            var sut = new AgentFactory(
+                chatClientFactory.Object,
+                Mock.Of<IToolBinderFactory>(),
+                CreateConfigStore(),
+                CreateAgentDefaults(),
+                CreateObservabilityOptions(),
+                NullLogger<AgentFactory>.Instance);
+
+            var agentDefinition = new AgentDefinition
+            {
+                Name = "structured-agent",
+                Instructions = "Return structured output.",
+                Provider = "azure",
+                Model = "gpt-4o",
+                ResponseFormat = new ResponseFormatDefinition
+                {
+                    Type = "json_schema",
+                    Schema = """{"type":"array","items":{"type":"string"}}"""
+                }
+            };
+
+            // Act
+            var action = () => sut.CreateAgentAsync(agentDefinition, requireClarificationEnvelope: true);
+
+            // Assert
+            await Assert.ThrowsExactlyAsync<InvalidOperationException>(action);
+        }
+
+        [TestMethod]
         public async Task CreateAgentAsync_WhenInstructionsAreMissing_ThrowsInvalidOperationException()
         {
             // Arrange

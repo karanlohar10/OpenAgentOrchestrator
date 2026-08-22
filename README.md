@@ -348,9 +348,20 @@ or, for a routine (non-question) result:
   conversation session that is itself part of the same durable checkpoint the pause/resume flow
   already relies on. Only the human's new answer is sent on loop-back; the agent's own prior turn
   (its question) is already retained internally.
-- **Caveat**: if an agent already has its own custom `responseFormat` (a structured-output schema),
-  the two are not composed automatically — embed that structured output (as a string) inside the
-  envelope's `"content"` field yourself via the agent's instructions.
+- **Agents with their own `responseFormat: json_schema` are fully supported** - rather than
+  wrapping/nesting the agent's declared schema (which would visibly change the shape of its raw
+  JSON output versus what was configured), the engine merges `needsClarification`/
+  `clarificationQuestion` as two **additive sibling properties** directly into the agent's existing
+  schema, leaving every field the agent declares (name, type, position) completely untouched - e.g.
+  a `{"summary": ..., "confidence": ...}` schema becomes
+  `{"summary": ..., "confidence": ..., "needsClarification": ..., "clarificationQuestion": ...}`.
+  There is no separate `"content"` key in this case: the answer/output forwarded downstream is
+  reconstructed by stripping just those two signal fields back out, so it is byte-for-byte what the
+  agent's own configured schema would have produced without clarification enabled. This requires
+  the schema's root `"type"` to be `"object"` with a `properties` map, and that it doesn't already
+  declare a property literally named `needsClarification`/`clarificationQuestion` (config validation
+  rejects both cases with a clear error). Agents without a `responseFormat`, or with `type: text`/
+  `json_object`, are unaffected by this and keep using the flat envelope shown above.
 - **Fail-safe**: if an agent's response doesn't parse as the envelope (e.g. a model ignored the
   instructions), the raw text is used as-is and treated as a non-clarification result — the step
   still pauses for review, it just won't offer the clarification-specific metadata for that round.

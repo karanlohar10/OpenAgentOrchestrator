@@ -40,6 +40,13 @@ orchestrators:
         # answer loops back to the SAME agent for another turn, everything else forwards to the
         # next agent as usual. See README "Configuring human-in-the-loop clarification" for details.
         enableClarificationFlag: false
+        # Note: research-agent below has its own responseFormat: json_schema. When
+        # enableClarificationFlag is true, needsClarification/clarificationQuestion get merged as
+        # two additive sibling fields directly into that schema (not wrapped/nested) - every field
+        # research-agent's schema declares stays exactly as configured. See README "Configuring
+        # human-in-the-loop clarification" for the full behavior and its requirements (the schema's
+        # root must be "type": "object" with a "properties" map, and must not already declare a
+        # property named "needsClarification"/"clarificationQuestion").
     agents:
       # Agent Harness agent (see https://learn.microsoft.com/agent-framework/concepts/harness),
       # with a local shell tool attached (see

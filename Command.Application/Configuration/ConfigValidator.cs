@@ -181,6 +181,9 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             if (agent.ResponseFormat != null)
                 ValidateResponseFormat(orchestrator, agent, result);
 
+            if (agent.ResponseFormat is { Type: "json_schema" } && orchestrator.Checkpointing?.HumanInLoop?.EnableClarificationFlag == true)
+                ValidateClarificationSchemaCompatibility(orchestrator, agent, result);
+
             ValidateAgentType(orchestrator, agent, result);
 
             if (agent.Planning != null)
@@ -317,6 +320,64 @@ namespace OpenAgentOrchestrator.Command.Application.Configuration
             catch (JsonException ex)
             {
                 result.Errors.Add($"Orchestrator '{orchestrator.Id}', agent '{agent.Name}': responseFormat schema is not valid JSON ({ex.Message}).");
+            }
+        }
+
+        /// <summary>
+        /// When <c>checkpointing.humanInLoop.enableClarificationFlag</c> is set, an agent's own
+        /// <c>responseFormat: json_schema</c> gets two additive sibling properties merged in (see
+        /// <c>AgentFactory.MergeClarificationProperties</c>) rather than being wrapped - this
+        /// requires an object-rooted schema with a <c>properties</c> map, and no existing property
+        /// literally named <c>needsClarification</c>/<c>clarificationQuestion</c> (which would
+        /// collide with the merged fields). Skips silently if the schema is missing/malformed -
+        /// <see cref="ValidateResponseFormat"/> already reports that separately.
+        /// </summary>
+        private static void ValidateClarificationSchemaCompatibility(OrchestratorDefinition orchestrator, AgentDefinition agent, ValidationResult result)
+        {
+            var schema = agent.ResponseFormat!.Schema;
+            if (string.IsNullOrWhiteSpace(schema))
+                return;
+
+            var prefix = $"Orchestrator '{orchestrator.Id}', agent '{agent.Name}': responseFormat schema";
+
+            JsonDocument document;
+            try
+            {
+                document = JsonDocument.Parse(schema);
+            }
+            catch (JsonException)
+            {
+                return;
+            }
+
+            using (document)
+            {
+                var root = document.RootElement;
+
+                if (root.ValueKind != JsonValueKind.Object
+                    || !root.TryGetProperty("type", out var typeProp)
+                    || typeProp.ValueKind != JsonValueKind.String
+                    || !string.Equals(typeProp.GetString(), "object", StringComparison.Ordinal))
+                {
+                    result.Errors.Add($"{prefix} must declare \"type\": \"object\" at its root to combine with enableClarificationFlag.");
+                    return;
+                }
+
+                if (!root.TryGetProperty("properties", out var propertiesProp) || propertiesProp.ValueKind != JsonValueKind.Object)
+                {
+                    result.Errors.Add($"{prefix} must declare a \"properties\" object to combine with enableClarificationFlag.");
+                    return;
+                }
+
+                foreach (var existing in propertiesProp.EnumerateObject())
+                {
+                    if (existing.Name is Engine.ClarificationEnvelope.NeedsClarificationPropertyName or Engine.ClarificationEnvelope.ClarificationQuestionPropertyName)
+                    {
+                        result.Errors.Add(
+                            $"{prefix} already declares a property named '{existing.Name}', which conflicts with a reserved " +
+                            "clarification field of the same name - rename it or disable enableClarificationFlag for this agent.");
+                    }
+                }
             }
         }
 

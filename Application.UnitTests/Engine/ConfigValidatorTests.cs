@@ -244,6 +244,71 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         }
 
         [TestMethod]
+        public void Validate_ClarificationEnabled_JsonSchemaAgentWithObjectRootAndNoCollision_ReturnsValid()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Checkpointing = new CheckpointingDefinition
+            {
+                Enabled = true,
+                HumanInLoop = new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true }
+            };
+            config.Orchestrators[0].Agents[0].ResponseFormat = new ResponseFormatDefinition
+            {
+                Type = "json_schema",
+                Schema = """{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}"""
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsTrue(result.IsValid);
+        }
+
+        [TestMethod]
+        public void Validate_ClarificationEnabled_JsonSchemaAgentWithNonObjectRoot_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Checkpointing = new CheckpointingDefinition
+            {
+                Enabled = true,
+                HumanInLoop = new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true }
+            };
+            config.Orchestrators[0].Agents[0].ResponseFormat = new ResponseFormatDefinition
+            {
+                Type = "json_schema",
+                Schema = """{"type":"array","items":{"type":"string"}}"""
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("test-agent") && e.Contains("\"type\": \"object\"")));
+        }
+
+        [TestMethod]
+        public void Validate_ClarificationEnabled_JsonSchemaAgentDeclaresReservedFieldName_ReturnsError()
+        {
+            var config = CreateValidConfig();
+            config.Orchestrators[0].Checkpointing = new CheckpointingDefinition
+            {
+                Enabled = true,
+                HumanInLoop = new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true }
+            };
+            config.Orchestrators[0].Agents[0].ResponseFormat = new ResponseFormatDefinition
+            {
+                Type = "json_schema",
+                Schema = """{"type":"object","properties":{"clarificationQuestion":{"type":"string"}},"required":["clarificationQuestion"]}"""
+            };
+
+            var validator = new ConfigValidator();
+            var result = validator.Validate(config);
+
+            Assert.IsFalse(result.IsValid);
+            Assert.IsTrue(result.Errors.Any(e => e.Contains("test-agent") && e.Contains("clarificationQuestion") && e.Contains("reserved")));
+        }
+
+        [TestMethod]
         public void Validate_AgentMissingProviderAndModel_WithNoDefaultsConfigured_ReturnsErrors()
         {
             var config = CreateValidConfig();

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
@@ -50,6 +51,24 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             Set "needsClarification" to true only when you genuinely cannot proceed without a human answering a specific question first - in that case, put the question in "clarificationQuestion" and leave "content" empty or set it to your partial progress so far. Otherwise set "needsClarification" to false and put your complete, real output in "content".
             """;
 
+        /// <summary>
+        /// Variant of <see cref="ClarificationEnvelopeInstructions"/> used when the agent already
+        /// has its own <c>responseFormat: json_schema</c>. In that case <c>needsClarification</c>/
+        /// <c>clarificationQuestion</c> are merged as two extra sibling properties directly into
+        /// the agent's own schema (see <see cref="MergeClarificationProperties"/>) rather than
+        /// wrapped in a separate envelope - so the agent's own declared fields are completely
+        /// unaffected and still populate the top level of its JSON response as configured.
+        /// </summary>
+        internal const string ClarificationEnvelopeInstructionsForStructuredAgent = """
+            Your JSON response schema has two extra fields added to it: "needsClarification" (boolean) and \
+            "clarificationQuestion" (string, nullable). Set "needsClarification" to true only when you \
+            genuinely cannot proceed without a human answering a specific question first - in that case, put \
+            the question in "clarificationQuestion" and fill your other required fields with placeholder/empty \
+            values (they are still required by the schema, but will be ignored). Otherwise set \
+            "needsClarification" to false, "clarificationQuestion" to null, and fill your other fields with \
+            your complete, real output exactly as you normally would.
+            """;
+
         public async Task<AIAgent> CreateAgentAsync(
             AgentDefinition agentDef,
             bool requireClarificationEnvelope = false,
@@ -88,9 +107,14 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
                 ?? throw new InvalidOperationException($"Agent '{agentDef.Name}' is missing resolved instructions.");
 
             if (requireClarificationEnvelope)
-                instructions = $"{instructions}\n\n{ClarificationEnvelopeInstructions}";
+            {
+                var usesJsonSchema = string.Equals(agentDef.ResponseFormat?.Type, "json_schema", StringComparison.OrdinalIgnoreCase);
+                instructions = usesJsonSchema
+                    ? $"{instructions}\n\n{ClarificationEnvelopeInstructionsForStructuredAgent}"
+                    : $"{instructions}\n\n{ClarificationEnvelopeInstructions}";
+            }
 
-            var responseFormat = BuildResponseFormat(agentDef);
+            var responseFormat = BuildResponseFormat(agentDef, requireClarificationEnvelope);
 
             var chatOptions = new ChatOptions
             {
@@ -283,7 +307,7 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
 #pragma warning restore MAAI001
         }
 
-        private static ChatResponseFormat? BuildResponseFormat(AgentDefinition agentDef)
+        private static ChatResponseFormat? BuildResponseFormat(AgentDefinition agentDef, bool requireClarificationEnvelope)
         {
             var config = agentDef.ResponseFormat;
             if (config is null)
@@ -293,13 +317,13 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
             {
                 "text" => ChatResponseFormat.Text,
                 "json_object" => ChatResponseFormat.Json,
-                "json_schema" => BuildJsonSchemaResponseFormat(agentDef.Name, config),
+                "json_schema" => BuildJsonSchemaResponseFormat(agentDef.Name, config, requireClarificationEnvelope),
                 _ => throw new InvalidOperationException(
                     $"Agent '{agentDef.Name}': unsupported responseFormat type '{config.Type}'. Must be one of: text, json_object, json_schema.")
             };
         }
 
-        private static ChatResponseFormatJson BuildJsonSchemaResponseFormat(string agentName, ResponseFormatDefinition config)
+        private static ChatResponseFormatJson BuildJsonSchemaResponseFormat(string agentName, ResponseFormatDefinition config, bool requireClarificationEnvelope)
         {
             if (string.IsNullOrWhiteSpace(config.Schema))
                 throw new InvalidOperationException($"Agent '{agentName}': responseFormat type 'json_schema' requires a non-empty schema.");
@@ -315,7 +339,79 @@ namespace OpenAgentOrchestrator.Command.Application.Agents
                 throw new InvalidOperationException($"Agent '{agentName}': responseFormat schema is not valid JSON: {ex.Message}", ex);
             }
 
+            if (requireClarificationEnvelope)
+                schemaElement = MergeClarificationProperties(agentName, schemaElement);
+
             return ChatResponseFormat.ForJsonSchema(schemaElement);
+        }
+
+        /// <summary>
+        /// Merges the two reserved clarification signal fields (<see cref="ClarificationEnvelope.NeedsClarificationPropertyName"/>/
+        /// <see cref="ClarificationEnvelope.ClarificationQuestionPropertyName"/>) as additive sibling
+        /// properties directly into <paramref name="schemaElement"/>'s own <c>properties</c>, leaving
+        /// every property/required entry the user declared completely untouched (same name, type,
+        /// and position) - deliberately avoiding nesting the user's schema under a new wrapper
+        /// property, which would change the shape of the agent's raw JSON output versus what the
+        /// user configured. See <see cref="ClarificationEnvelope"/> for how the merged fields are
+        /// stripped back out again to reconstruct the agent's original output shape.
+        /// </summary>
+        private static JsonElement MergeClarificationProperties(string agentName, JsonElement schemaElement)
+        {
+            if (schemaElement.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidOperationException(
+                    $"Agent '{agentName}': responseFormat schema must be a JSON object to combine with enableClarificationFlag.");
+            }
+
+            if (!schemaElement.TryGetProperty("type", out var typeProp)
+                || typeProp.ValueKind != JsonValueKind.String
+                || !string.Equals(typeProp.GetString(), "object", StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Agent '{agentName}': responseFormat schema must declare \"type\": \"object\" at its root to combine with enableClarificationFlag.");
+            }
+
+            if (!schemaElement.TryGetProperty("properties", out var propertiesProp) || propertiesProp.ValueKind != JsonValueKind.Object)
+            {
+                throw new InvalidOperationException(
+                    $"Agent '{agentName}': responseFormat schema must declare a \"properties\" object to combine with enableClarificationFlag.");
+            }
+
+            foreach (var existing in propertiesProp.EnumerateObject())
+            {
+                if (existing.Name is ClarificationEnvelope.NeedsClarificationPropertyName or ClarificationEnvelope.ClarificationQuestionPropertyName)
+                {
+                    throw new InvalidOperationException(
+                        $"Agent '{agentName}': responseFormat schema already declares a property named '{existing.Name}', which " +
+                        "conflicts with a reserved clarification field of the same name. Rename it or disable enableClarificationFlag for this agent.");
+                }
+            }
+
+            var schemaNode = JsonNode.Parse(schemaElement.GetRawText())!.AsObject();
+            var propertiesNode = schemaNode["properties"]!.AsObject();
+
+            propertiesNode[ClarificationEnvelope.NeedsClarificationPropertyName] = new JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] = "Set to true only when you genuinely cannot proceed without a human answering a specific question first."
+            };
+            propertiesNode[ClarificationEnvelope.ClarificationQuestionPropertyName] = new JsonObject
+            {
+                ["type"] = new JsonArray("string", "null"),
+                ["description"] = "The question for the human. Required (non-null) only when needsClarification is true."
+            };
+
+            if (schemaNode["required"] is not JsonArray requiredNode)
+            {
+                requiredNode = [];
+                schemaNode["required"] = requiredNode;
+            }
+
+            requiredNode.Add(ClarificationEnvelope.NeedsClarificationPropertyName);
+            requiredNode.Add(ClarificationEnvelope.ClarificationQuestionPropertyName);
+
+            using var mergedDocument = JsonDocument.Parse(schemaNode.ToJsonString());
+            return mergedDocument.RootElement.Clone();
         }
 
         private string ResolveModel(AgentDefinition agentDef)

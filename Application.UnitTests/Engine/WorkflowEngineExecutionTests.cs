@@ -287,6 +287,64 @@ namespace OpenAgentOrchestrator.Application.UnitTests.Engine
         }
 
         [TestMethod]
+        public async Task ExecuteAsync_ClarificationFlagEnabled_SchemaMergedAgentEnvelope_LoopsBackAndForwardsReconstructedContent()
+        {
+            // Arrange: simulates what AgentFactory.MergeClarificationProperties produces for an
+            // agent with its own responseFormat: json_schema - needsClarification/clarificationQuestion
+            // sit as siblings alongside the agent's own declared fields ("summary"/"confidence"),
+            // with no separate "content" key at all.
+            using var artifactDirectory = new TestArtifactDirectory("workflow-engine-clarification-schema-merged");
+            var callCount = 0;
+            var researcherClient = new RecordingChatClient((messages, _, _) =>
+            {
+                callCount++;
+                return callCount == 1
+                    ? """{"summary": "", "confidence": "low", "needsClarification": true, "clarificationQuestion": "Which framing do you want?"}"""
+                    : """{"summary": "Quantum computing is progressing steadily.", "confidence": "high", "needsClarification": false, "clarificationQuestion": null}""";
+            });
+
+            var orchestrator = CreateOrchestrator(
+                agents: [new AgentDefinition { Name = "researcher", Instructions = "Research.", Provider = "test-provider", Model = "test-model" }],
+                humanInLoop: new HumanInLoopDefinition { Enabled = true, EnableClarificationFlag = true },
+                checkpointing: new CheckpointingDefinition { Enabled = true });
+
+            var sessionStore = new InMemorySessionStore();
+            var engine = CreateEngine(
+                orchestrator,
+                sessionStore,
+                agentsByName: new Dictionary<string, AIAgent>
+                {
+                    ["researcher"] = WorkflowTestDoubles.CreateAgent("researcher", researcherClient)
+                },
+                checkpointStore: new JsonFileWorkflowCheckpointStore(artifactDirectory.Path));
+
+            // Act
+            var executeResponse = await engine.ExecuteAsync(orchestrator, new ExecuteRequest { Input = "input" });
+            var finalResponse = await engine.ResumeAsync(
+                orchestrator,
+                executeResponse.SessionId,
+                new ResumeRequest { Action = ResumeAction.Continue, EditedOutput = "public status update" });
+
+            // Assert: the pause correctly detects the merged-schema clarification signal.
+            executeResponse.Status.Should().Be("pending_approval");
+            executeResponse.PendingNeedsClarification.Should().BeTrue();
+            executeResponse.PendingClarificationQuestion.Should().Be("Which framing do you want?");
+
+            // Once answered, the forwarded/final output is the agent's own schema shape with the
+            // two signal keys stripped back out - no trace of the merge, byte-for-byte what the
+            // agent's own configured schema would have produced without it.
+            finalResponse.Status.Should().Be("pending_approval");
+            finalResponse.PendingNeedsClarification.Should().BeFalse();
+            using (var finalJson = JsonDocument.Parse(finalResponse.Output!))
+            {
+                finalJson.RootElement.TryGetProperty("needsClarification", out _).Should().BeFalse();
+                finalJson.RootElement.TryGetProperty("clarificationQuestion", out _).Should().BeFalse();
+                finalJson.RootElement.GetProperty("summary").GetString().Should().Be("Quantum computing is progressing steadily.");
+                finalJson.RootElement.GetProperty("confidence").GetString().Should().Be("high");
+            }
+        }
+
+        [TestMethod]
         public async Task ExecuteAsync_ClarificationFlagEnabled_NeedsClarificationFalse_ForwardsNormallyWithoutLoopback()
         {
             // Arrange
